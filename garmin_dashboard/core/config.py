@@ -5,7 +5,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RESOURCES_DIR = PROJECT_ROOT / "resources"
-FIT_DIR = RESOURCES_DIR / "fits"
+FIT_DIR = RESOURCES_DIR / "FIT"
 DETAIL_CSV = PROJECT_ROOT / "garmin_swim_intervals_details.csv"
 SUMMARY_CSV = PROJECT_ROOT / "garmin_swim_intervals_summary.csv"
 CACHE_FILE = PROJECT_ROOT / "garmin_swim_fit_cache.pkl"
@@ -48,18 +48,11 @@ class RuntimeConfig:
 @dataclass(frozen=True)
 class ReportRequest:
     swim_mode: str = "all"
-    period: str = "year"
+    period: str = "current_year"
     days: int | None = None
     persist_csv: bool = False
     interval_config: IntervalConfig = IntervalConfig()
     runtime_config: RuntimeConfig = RuntimeConfig()
-
-
-def folder_contains_fit_files(path: Path) -> bool:
-    try:
-        return any(child.is_file() and child.suffix.lower() == ".fit" for child in path.rglob("*"))
-    except Exception:
-        return False
 
 
 def list_resource_dirs(root: Path | None = None) -> list[Path]:
@@ -72,8 +65,7 @@ def list_resource_dirs(root: Path | None = None) -> list[Path]:
             continue
         if child.name.startswith("."):
             continue
-        if folder_contains_fit_files(child):
-            candidates.append(child)
+        candidates.append(child)
     return candidates
 
 
@@ -92,6 +84,9 @@ def resolve_resource_dir(resource_name: str | None) -> Path:
 
     for path in resources:
         if path.name == FIT_DIR.name:
+            return path
+    for path in resources:
+        if path.name.lower() == "fit":
             return path
     return resources[0]
 

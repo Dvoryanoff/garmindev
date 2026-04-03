@@ -15,9 +15,9 @@ def row_activity_date(row: dict):
     return None
 
 
-def resolve_period(period: str = "year", days: int | None = None, today: date | None = None):
+def resolve_period(period: str = "current_year", days: int | None = None, today: date | None = None):
     today = today or datetime.now().date()
-    period = norm(period or "year")
+    period = norm(period or "current_year")
 
     if days is not None:
         if days < 0:
@@ -32,6 +32,9 @@ def resolve_period(period: str = "year", days: int | None = None, today: date | 
         return today - timedelta(days=90), today, "Последние 90 дней"
     if period in {"month", "30"}:
         return today - timedelta(days=30), today, "Последние 30 дней"
+    if period in {"current_year", "year_to_date", "ytd"}:
+        start = today.replace(month=1, day=1)
+        return start, today, "Текущий год"
     if period == "current_month":
         start = today.replace(day=1)
         return start, today, "Текущий месяц"
