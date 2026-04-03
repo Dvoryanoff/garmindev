@@ -60,3 +60,37 @@ python3 garmin_local.py
 ```bash
 python3 tools/benchmark_runtime.py
 ```
+# Garmin Dev Dashboard
+
+Локальный dashboard для анализа плавательных тренировок Garmin из FIT-файлов.
+
+## Запуск
+
+```bash
+python3 run_dashboard.py
+```
+
+При старте dashboard печатает адрес `http://127.0.0.1:8000` и по умолчанию открывает браузер автоматически.
+
+Если автооткрытие не нужно:
+
+```bash
+GARMIN_OPEN_BROWSER=0 python3 run_dashboard.py
+```
+
+## Проверки перед push
+
+Локальный `pre-push` хук запускает:
+
+- компиляцию Python-файлов
+- базовые `unittest`-тесты
+
+Ручной запуск:
+
+```bash
+python3 tools/check.py
+```
+
+## CI на GitHub
+
+В репозитории добавлен GitHub Actions workflow `.github/workflows/ci.yml`, который запускает те же проверки на `push` и `pull_request`.
