@@ -229,6 +229,7 @@ def build_report(request: ReportRequest) -> dict:
             "swim_mode": request.swim_mode,
             "period": request.period,
             "days": request.days,
+            "resource_dir": request.runtime_config.fit_dir.name,
             "period_label": period_label,
             "date_start": start_date.isoformat() if start_date else "",
             "date_end": end_date.isoformat() if end_date else "",

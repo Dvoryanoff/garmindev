@@ -1,3 +1,4 @@
+const resourceDirEl = document.getElementById("resourceDir");
 const swimModeEl = document.getElementById("swimMode");
 const periodModePresetEl = document.getElementById("periodModePreset");
 const periodModeCustomEl = document.getElementById("periodModeCustom");
@@ -17,6 +18,7 @@ const metaBoxEl = document.getElementById("metaBox");
 const workoutsHintEl = document.getElementById("workoutsHint");
 const summaryExportEl = document.getElementById("summaryExport");
 const detailsExportEl = document.getElementById("detailsExport");
+const heroSourceEl = document.getElementById("heroSource");
 const defaultSelectedDistances = new Set([50, 100, 150, 200, 300, 400, 500, 600, 800, 1000]);
 
 function buildDistanceOptions(maxDistance) {
@@ -74,6 +76,7 @@ function escapeHtml(value) {
 function buildQuery({ persistCsv = false } = {}) {
   const useCustomDays = periodModeCustomEl.checked;
   const params = new URLSearchParams({
+    resource_dir: resourceDirEl.value,
     swim_mode: swimModeEl.value,
     period: useCustomDays ? "all" : periodEl.value,
   });
@@ -104,6 +107,7 @@ function syncPeriodMode() {
 
 function renderMetrics(overview, filters) {
   const items = [
+    ["Источник", filters.resource_dir || "—", "папка с FIT-файлами"],
     ["Период", filters.period_label, `${filters.date_start || "начало"} - ${filters.date_end || "сегодня"}`],
     ["Отрезков", overview.intervals, `${overview.workouts} тренировок`],
     ["Объём", `${overview.total_distance_m} м`, overview.swim_types.join(", ") || "без типа"],
@@ -122,7 +126,7 @@ function renderMetrics(overview, filters) {
 
 function renderSummary(rows) {
   if (!rows.length) {
-    summaryTableEl.innerHTML = `<tr><td colspan="9">Нет данных для выбранных фильтров.</td></tr>`;
+    summaryTableEl.innerHTML = `<tr><td colspan="8">Нет данных для выбранных фильтров.</td></tr>`;
     return;
   }
 
@@ -130,7 +134,6 @@ function renderSummary(rows) {
     <tr>
       <td>${escapeHtml(row.distance_m)} м</td>
       <td>${escapeHtml(row.count)}</td>
-      <td>${escapeHtml(row.total_distance_m)} м</td>
       <td>${escapeHtml(row.avg_time)}</td>
       <td>${escapeHtml(row.best_time)}</td>
       <td>${escapeHtml(row.best_pace_100m)}</td>
@@ -144,14 +147,13 @@ function renderSummary(rows) {
 function renderWorkouts(rows) {
   workoutsHintEl.textContent = `${rows.length} тренировок в выборке`;
   if (!rows.length) {
-    workoutsTableEl.innerHTML = `<tr><td colspan="5">Тренировки не найдены.</td></tr>`;
+    workoutsTableEl.innerHTML = `<tr><td colspan="4">Тренировки не найдены.</td></tr>`;
     return;
   }
 
   workoutsTableEl.innerHTML = rows.map((row) => `
     <tr>
       <td>${escapeHtml(row.date)}</td>
-      <td>${escapeHtml(row.intervals)}</td>
       <td>${escapeHtml(row.total_distance_m)} м</td>
       <td>${escapeHtml(row.total_time)}</td>
       <td>${escapeHtml(row.best_pace_100m)}</td>
@@ -211,14 +213,46 @@ async function loadReport({ persistCsv = false } = {}) {
   }
 }
 
+async function loadResources() {
+  const response = await fetch(`/api/resources?_ts=${Date.now()}`, {
+    cache: "no-store",
+  });
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(payload.error || "Не удалось получить список папок с FIT-файлами");
+  }
+
+  const resources = Array.isArray(payload.resources) ? payload.resources : [];
+  resourceDirEl.innerHTML = resources.map((resource) => `
+    <option value="${escapeHtml(resource.name)}">${escapeHtml(resource.name)}</option>
+  `).join("");
+
+  if (payload.default_resource) {
+    resourceDirEl.value = payload.default_resource;
+    heroSourceEl.textContent = payload.default_resource;
+  }
+}
+
 periodModePresetEl.addEventListener("change", syncPeriodMode);
 periodModeCustomEl.addEventListener("change", syncPeriodMode);
 
 longMinDistanceEl.addEventListener("change", renderDistancePicker);
+resourceDirEl.addEventListener("change", () => {
+  heroSourceEl.textContent = resourceDirEl.value || "локальная папка Garmin Dev";
+});
 
 loadButtonEl.addEventListener("click", () => loadReport());
 saveCsvButtonEl.addEventListener("click", () => loadReport({ persistCsv: true }));
 
 syncPeriodMode();
 renderDistancePicker();
-loadReport();
+
+(async () => {
+  try {
+    await loadResources();
+    await loadReport();
+  } catch (error) {
+    alert(error.message);
+  }
+})();

@@ -7,7 +7,17 @@ from functools import partial
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
-from garmin_dashboard.core.config import DEFAULT_BATCH_SIZE, DEFAULT_MAX_WORKERS, IntervalConfig, PROJECT_ROOT, ReportRequest, RuntimeConfig, parse_distances
+from garmin_dashboard.core.config import (
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_MAX_WORKERS,
+    IntervalConfig,
+    PROJECT_ROOT,
+    ReportRequest,
+    RuntimeConfig,
+    list_resource_dirs,
+    parse_distances,
+    resolve_resource_dir,
+)
 from garmin_dashboard.core.dataset import clear_cache_file
 from .reports import build_report
 
@@ -21,6 +31,7 @@ def build_request_from_params(params: dict) -> ReportRequest:
     days_raw = params.get("days", [""])[0]
     distances_raw = params.get("distances", [""])[0]
     long_min_raw = params.get("long_min_distance", ["1000"])[0]
+    resource_dir_raw = params.get("resource_dir", [""])[0]
     persist_csv = params.get("persist_csv", ["0"])[0] == "1"
 
     interval_config = IntervalConfig(
@@ -28,6 +39,7 @@ def build_request_from_params(params: dict) -> ReportRequest:
         long_freestyle_min_distance_m=float(long_min_raw),
     )
     runtime_config = RuntimeConfig(
+        fit_dir=resolve_resource_dir(resource_dir_raw),
         max_workers=DEFAULT_MAX_WORKERS,
         batch_size=DEFAULT_BATCH_SIZE,
     )
@@ -53,6 +65,9 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/api/resources":
+            self.handle_resources()
+            return
         if parsed.path == "/api/report":
             self.handle_report(parsed.query)
             return
@@ -95,6 +110,19 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             self.wfile.write(payload)
         except Exception as exc:
             self.send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+
+    def handle_resources(self):
+        resources = [
+            {
+                "name": path.name,
+                "path": str(path),
+            }
+            for path in list_resource_dirs(PROJECT_ROOT)
+        ]
+        self.send_json({
+            "resources": resources,
+            "default_resource": resolve_resource_dir(None).name if resources else "",
+        })
 
     def send_json(self, payload: dict, status: HTTPStatus = HTTPStatus.OK):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")

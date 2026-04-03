@@ -20,7 +20,7 @@
       <div class="hero-card">
         <div class="hero-item">
           <span>Источник</span>
-          <strong>локальная папка Garmin Dev</strong>
+          <strong id="heroSource">локальная папка Garmin Dev</strong>
         </div>
         <div class="hero-item">
           <span>Экспорт</span>
@@ -34,6 +34,10 @@
     </section>
 
     <section class="controls controls-primary">
+      <div class="control">
+        <label for="resourceDir">Источник данных</label>
+        <select id="resourceDir"></select>
+      </div>
       <div class="control">
         <label for="swimMode">Режим плавания</label>
         <select id="swimMode">
@@ -111,7 +115,6 @@
             <tr>
               <th>Дистанция</th>
               <th>Отрезков</th>
-              <th>Объём</th>
               <th>Среднее время</th>
               <th>Лучшее время</th>
               <th>Лучший темп</th>
@@ -136,7 +139,6 @@
             <thead>
               <tr>
                 <th>Дата</th>
-                <th>Отрезков</th>
                 <th>Объём</th>
                 <th>Время</th>
                 <th>Лучший темп</th>

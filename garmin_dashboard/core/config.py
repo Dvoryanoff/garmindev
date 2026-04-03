@@ -51,6 +51,44 @@ class ReportRequest:
     runtime_config: RuntimeConfig = RuntimeConfig()
 
 
+def folder_contains_fit_files(path: Path) -> bool:
+    try:
+        return any(child.is_file() and child.suffix.lower() == ".fit" for child in path.rglob("*"))
+    except Exception:
+        return False
+
+
+def list_resource_dirs(root: Path | None = None) -> list[Path]:
+    root = root or PROJECT_ROOT
+    candidates = []
+    for child in sorted(root.iterdir(), key=lambda p: p.name.lower()):
+        if not child.is_dir():
+            continue
+        if child.name.startswith("."):
+            continue
+        if folder_contains_fit_files(child):
+            candidates.append(child)
+    return candidates
+
+
+def resolve_resource_dir(resource_name: str | None) -> Path:
+    resources = list_resource_dirs(PROJECT_ROOT)
+    if not resources:
+        return FIT_DIR
+
+    if resource_name:
+        normalized = str(resource_name).strip()
+        for path in resources:
+            if path.name == normalized:
+                return path
+        raise ValueError(f"Неизвестная папка ресурса: {resource_name}")
+
+    for path in resources:
+        if path.name == FIT_DIR.name:
+            return path
+    return resources[0]
+
+
 def parse_distances(value: str | None, fallback: tuple[int, ...] | None = None) -> tuple[int, ...]:
     fallback = fallback or IntervalConfig().target_distances
     if not value or not str(value).strip():
