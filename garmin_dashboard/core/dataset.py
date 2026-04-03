@@ -6,8 +6,16 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from time import perf_counter
 
-from .config import CACHE_VERSION, IntervalConfig, RuntimeConfig
-from .fit_parser import decode_fit_file, get_activity_datetime, is_supported_swim, iter_target_swim_laps
+from .config import CACHE_VERSION, IntervalConfig, RESOURCES_DIR, RuntimeConfig
+from .fit_parser import (
+    decode_fit_file,
+    get_activity_datetime,
+    get_activity_key,
+    get_user_id,
+    get_user_name,
+    is_supported_swim,
+    iter_target_swim_laps,
+)
 from .utils import format_elapsed
 
 
@@ -15,7 +23,24 @@ def find_fit_files(root: Path) -> list[Path]:
     return sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() == ".fit")
 
 
-def load_cache(cache_file: Path) -> dict:
+def cache_matches_root(files_cache: dict, expected_root: Path | None = None) -> bool:
+    if not isinstance(files_cache, dict):
+        return False
+    if not files_cache:
+        return True
+
+    expected_root = (expected_root or RESOURCES_DIR).resolve()
+    for key in files_cache.keys():
+        try:
+            path = Path(str(key)).resolve()
+        except Exception:
+            return False
+        if expected_root not in path.parents and path != expected_root:
+            return False
+    return True
+
+
+def load_cache(cache_file: Path, expected_root: Path | None = None) -> dict:
     if not cache_file.exists():
         return {}
 
@@ -31,6 +56,9 @@ def load_cache(cache_file: Path) -> dict:
             return {}
 
         files_cache = payload.get("files", {})
+        if not cache_matches_root(files_cache, expected_root=expected_root):
+            print("Кэш найден, но ссылается на старую структуру папок — кэш будет пересобран.")
+            return {}
         return files_cache if isinstance(files_cache, dict) else {}
 
     except Exception as e:
@@ -76,12 +104,18 @@ def process_fit_file(fit_path_str: str, interval_config: IntervalConfig):
 
         activity_dt = get_activity_datetime(messages)
         activity_dt_text = activity_dt.isoformat(sep=" ") if activity_dt else ""
+        activity_key = get_activity_key(messages, fit_path)
+        user_id = get_user_id(messages) or "unknown"
+        user_name = get_user_name(messages, fit_path)
 
         out = []
         for lap in iter_target_swim_laps(messages, interval_config=interval_config):
             out.append({
                 "file_name": fit_path.name,
+                "activity_key": activity_key,
                 "activity_date": activity_dt_text,
+                "user_id": user_id,
+                "user_name": user_name,
                 "lap_start": lap["lap_start"].isoformat(sep=" ") if lap["lap_start"] else "",
                 "lap_end": lap["lap_end"].isoformat(sep=" ") if lap["lap_end"] else "",
                 "distance_m": lap["distance_m"],
@@ -131,7 +165,10 @@ def write_detail_csv(detail_rows: list[dict], target_path: Path):
             f,
             fieldnames=[
                 "file_name",
+                "activity_key",
                 "activity_date",
+                "user_id",
+                "user_name",
                 "lap_start",
                 "lap_end",
                 "swim_type",
@@ -202,7 +239,7 @@ def generate_dataset(
         )
 
     t2 = perf_counter()
-    old_cache = load_cache(runtime_config.cache_file)
+    old_cache = load_cache(runtime_config.cache_file, expected_root=runtime_config.fit_dir)
     t3 = perf_counter()
 
     state_by_path = {}

@@ -2,7 +2,7 @@ import json
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 
-from garmin_dashboard.core.config import ReportRequest
+from garmin_dashboard.core.config import RESOURCES_DIR, ReportRequest
 from garmin_dashboard.core.dataset import generate_dataset, write_detail_csv, write_summary_csv
 from garmin_dashboard.core.utils import format_duration, norm, pace_str, pace_str_precise, to_datetime
 
@@ -229,7 +229,7 @@ def build_report(request: ReportRequest) -> dict:
             "swim_mode": request.swim_mode,
             "period": request.period,
             "days": request.days,
-            "resource_dir": request.runtime_config.fit_dir.name,
+            "resource_dir": str(request.runtime_config.fit_dir.relative_to(RESOURCES_DIR)),
             "period_label": period_label,
             "date_start": start_date.isoformat() if start_date else "",
             "date_end": end_date.isoformat() if end_date else "",

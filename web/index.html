@@ -13,7 +13,7 @@
         <p class="eyebrow">Garmin Dev Dashboard</p>
         <h1>Локальный отчёт по плавательным тренировкам</h1>
         <p class="lead">
-          Дашборд строится на основе локальных FIT-файлов из папки <code>fits</code> и показывает
+          Дашборд строится на основе локальных FIT-файлов из папки <code>resources</code> и показывает
           сводку по открытой воде и бассейну без запуска длинных консольных команд.
         </p>
       </div>
@@ -21,6 +21,7 @@
         <div class="hero-item">
           <span>Источник</span>
           <strong id="heroSource">локальная папка Garmin Dev</strong>
+          <select id="resourceDir" class="hero-select"></select>
         </div>
         <div class="hero-item">
           <span>Экспорт</span>
@@ -34,10 +35,6 @@
     </section>
 
     <section class="controls controls-primary">
-      <div class="control">
-        <label for="resourceDir">Источник данных</label>
-        <select id="resourceDir"></select>
-      </div>
       <div class="control">
         <label for="swimMode">Режим плавания</label>
         <select id="swimMode">
@@ -100,6 +97,7 @@
     </section>
 
     <section class="metrics" id="metrics"></section>
+    <section id="runtimeBanner" class="runtime-banner is-hidden"></section>
 
     <section class="panel">
       <div class="panel-header">

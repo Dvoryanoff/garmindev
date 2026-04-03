@@ -12,6 +12,7 @@ const selectedDistancesTextEl = document.getElementById("selectedDistancesText")
 const loadButtonEl = document.getElementById("loadButton");
 const saveCsvButtonEl = document.getElementById("saveCsvButton");
 const metricsEl = document.getElementById("metrics");
+const runtimeBannerEl = document.getElementById("runtimeBanner");
 const summaryTableEl = document.querySelector("#summaryTable tbody");
 const workoutsTableEl = document.querySelector("#workoutsTable tbody");
 const metaBoxEl = document.getElementById("metaBox");
@@ -20,6 +21,7 @@ const summaryExportEl = document.getElementById("summaryExport");
 const detailsExportEl = document.getElementById("detailsExport");
 const heroSourceEl = document.getElementById("heroSource");
 const defaultSelectedDistances = new Set([50, 100, 150, 200, 300, 400, 500, 600, 800, 1000]);
+let runtimeStatusTimer = null;
 
 function buildDistanceOptions(maxDistance) {
   const options = [];
@@ -107,7 +109,6 @@ function syncPeriodMode() {
 
 function renderMetrics(overview, filters) {
   const items = [
-    ["Источник", filters.resource_dir || "—", "папка с FIT-файлами"],
     ["Период", filters.period_label, `${filters.date_start || "начало"} - ${filters.date_end || "сегодня"}`],
     ["Отрезков", overview.intervals, `${overview.workouts} тренировок`],
     ["Объём", `${overview.total_distance_m} м`, overview.swim_types.join(", ") || "без типа"],
@@ -180,10 +181,34 @@ function renderMeta(meta) {
   `;
 }
 
+function setRuntimeBanner(message = "", visible = false) {
+  runtimeBannerEl.textContent = message;
+  runtimeBannerEl.classList.toggle("is-hidden", !visible || !message);
+}
+
+async function refreshRuntimeStatus() {
+  try {
+    const response = await fetch(`/api/runtime-status?_ts=${Date.now()}`, {
+      cache: "no-store",
+    });
+    const payload = await response.json();
+    if (payload.monthly_processing) {
+      setRuntimeBanner(payload.monthly_message || "Обработка данных...", true);
+    } else {
+      setRuntimeBanner("", false);
+    }
+    return payload;
+  } catch (error) {
+    // Ignore runtime status errors to avoid blocking report rendering.
+    return null;
+  }
+}
+
 async function loadReport({ persistCsv = false } = {}) {
   loadButtonEl.disabled = true;
   saveCsvButtonEl.disabled = true;
   loadButtonEl.textContent = persistCsv ? "Пересборка..." : "Загрузка...";
+  setRuntimeBanner("Обработка данных, пожалуйста подожди...", true);
 
   const query = buildQuery({ persistCsv });
   query.set("_ts", String(Date.now()));
@@ -204,12 +229,16 @@ async function loadReport({ persistCsv = false } = {}) {
     renderSummary(payload.summary);
     renderWorkouts(payload.workouts);
     renderMeta(payload.dataset_meta);
+    await refreshRuntimeStatus();
   } catch (error) {
     alert(error.message);
   } finally {
     loadButtonEl.disabled = false;
     saveCsvButtonEl.disabled = false;
     loadButtonEl.textContent = "Обновить отчёт";
+    if (runtimeBannerEl.textContent === "Обработка данных, пожалуйста подожди...") {
+      setRuntimeBanner("", false);
+    }
   }
 }
 
@@ -248,9 +277,12 @@ saveCsvButtonEl.addEventListener("click", () => loadReport({ persistCsv: true })
 syncPeriodMode();
 renderDistancePicker();
 
+runtimeStatusTimer = window.setInterval(refreshRuntimeStatus, 3000);
+
 (async () => {
   try {
     await loadResources();
+    await refreshRuntimeStatus();
     await loadReport();
   } catch (error) {
     alert(error.message);

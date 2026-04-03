@@ -12,6 +12,7 @@ from garmin_dashboard.core.config import (
     DEFAULT_MAX_WORKERS,
     IntervalConfig,
     PROJECT_ROOT,
+    RESOURCES_DIR,
     ReportRequest,
     RuntimeConfig,
     list_resource_dirs,
@@ -19,10 +20,15 @@ from garmin_dashboard.core.config import (
     resolve_resource_dir,
 )
 from garmin_dashboard.core.dataset import clear_cache_file
+from garmin_dashboard.core.monthly_history import refresh_monthly_history
 from .reports import build_report
 
 
 WEB_ROOT = PROJECT_ROOT / "web"
+RUNTIME_STATUS = {
+    "monthly_processing": False,
+    "monthly_message": "",
+}
 
 
 def build_request_from_params(params: dict) -> ReportRequest:
@@ -67,6 +73,9 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path == "/api/resources":
             self.handle_resources()
+            return
+        if parsed.path == "/api/runtime-status":
+            self.handle_runtime_status()
             return
         if parsed.path == "/api/report":
             self.handle_report(parsed.query)
@@ -114,15 +123,18 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
     def handle_resources(self):
         resources = [
             {
-                "name": path.name,
+                "name": str(path.relative_to(RESOURCES_DIR)),
                 "path": str(path),
             }
-            for path in list_resource_dirs(PROJECT_ROOT)
+            for path in list_resource_dirs(RESOURCES_DIR)
         ]
         self.send_json({
             "resources": resources,
-            "default_resource": resolve_resource_dir(None).name if resources else "",
+            "default_resource": str(resolve_resource_dir(None).relative_to(RESOURCES_DIR)) if resources else "",
         })
+
+    def handle_runtime_status(self):
+        self.send_json(dict(RUNTIME_STATUS))
 
     def send_json(self, payload: dict, status: HTTPStatus = HTTPStatus.OK):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -146,6 +158,36 @@ def run_server(host: str = "127.0.0.1", port: int = 8000):
     print(f"Статика: {WEB_ROOT}")
     print(f"Дефолтные настройки: workers={DEFAULT_MAX_WORKERS}, batch_size={DEFAULT_BATCH_SIZE}")
     print(f"Кэш сброшен при старте: {runtime_config.cache_file}")
+
+    def refresh_monthly_history_in_background():
+        if not RESOURCES_DIR.exists():
+            return
+        RUNTIME_STATUS["monthly_processing"] = True
+        RUNTIME_STATUS["monthly_message"] = "Обработка monthly history для resources"
+        print("Обновление помесячной таблицы...")
+        try:
+            monthly_meta = refresh_monthly_history(
+                RuntimeConfig(
+                    fit_dir=RESOURCES_DIR,
+                    max_workers=DEFAULT_MAX_WORKERS,
+                    batch_size=DEFAULT_BATCH_SIZE,
+                )
+            )
+            RUNTIME_STATUS["monthly_message"] = (
+                f"Monthly history готова: users={monthly_meta['users']}, workouts={monthly_meta['workouts']}"
+            )
+            print(
+                "Monthly history:",
+                "resources",
+                f"(users={monthly_meta['users']}, workouts={monthly_meta['workouts']}, processed={monthly_meta['processed_files']}, duplicates={monthly_meta['duplicate_files']}, cached={monthly_meta['cached_files']})",
+            )
+        except Exception as exc:
+            RUNTIME_STATUS["monthly_message"] = f"Ошибка monthly history: {exc}"
+            print(f"Monthly history error: {exc}")
+        finally:
+            RUNTIME_STATUS["monthly_processing"] = False
+
+    threading.Thread(target=refresh_monthly_history_in_background, daemon=True).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

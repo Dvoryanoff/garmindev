@@ -4,12 +4,16 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-FIT_DIR = PROJECT_ROOT / "fits"
+RESOURCES_DIR = PROJECT_ROOT / "resources"
+FIT_DIR = RESOURCES_DIR / "fits"
 DETAIL_CSV = PROJECT_ROOT / "garmin_swim_intervals_details.csv"
 SUMMARY_CSV = PROJECT_ROOT / "garmin_swim_intervals_summary.csv"
 CACHE_FILE = PROJECT_ROOT / "garmin_swim_fit_cache.pkl"
+MONTHLY_HISTORY_DIR = PROJECT_ROOT / "monthly_history"
 
-CACHE_VERSION = 6
+MONTHLY_FIXED_DISTANCES = (50, 100, 200, 400, 800, 1000, 1200, 1500, 1800)
+
+CACHE_VERSION = 7
 
 POOL_SUBSPORTS = {"lap_swimming", "pool_swimming", "lap", "pool", ""}
 OPEN_WATER_SUBSPORTS = {"open_water", "open_water_swimming", "open_water_swim"}
@@ -53,15 +57,17 @@ class ReportRequest:
 
 def folder_contains_fit_files(path: Path) -> bool:
     try:
-        return any(child.is_file() and child.suffix.lower() == ".fit" for child in path.rglob("*"))
+        return any(child.is_file() and child.suffix.lower() == ".fit" for child in path.iterdir())
     except Exception:
         return False
 
 
 def list_resource_dirs(root: Path | None = None) -> list[Path]:
-    root = root or PROJECT_ROOT
+    root = root or RESOURCES_DIR
+    if not root.exists():
+        return []
     candidates = []
-    for child in sorted(root.iterdir(), key=lambda p: p.name.lower()):
+    for child in sorted(root.rglob("*"), key=lambda p: str(p).lower()):
         if not child.is_dir():
             continue
         if child.name.startswith("."):
@@ -72,14 +78,15 @@ def list_resource_dirs(root: Path | None = None) -> list[Path]:
 
 
 def resolve_resource_dir(resource_name: str | None) -> Path:
-    resources = list_resource_dirs(PROJECT_ROOT)
+    resources = list_resource_dirs(RESOURCES_DIR)
     if not resources:
         return FIT_DIR
 
     if resource_name:
         normalized = str(resource_name).strip()
         for path in resources:
-            if path.name == normalized:
+            relative_name = str(path.relative_to(RESOURCES_DIR))
+            if relative_name == normalized:
                 return path
         raise ValueError(f"Неизвестная папка ресурса: {resource_name}")
 

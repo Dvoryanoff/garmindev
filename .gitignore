@@ -8,9 +8,5 @@ __pycache__/
 garmin_swim_fit_cache.pkl
 garmin_swim_intervals_details.csv
 garmin_swim_intervals_summary.csv
-FIT/
-fits/
-
-
-FIT/
-fits/
+monthly_history/
+resources/

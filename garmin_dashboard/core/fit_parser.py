@@ -79,6 +79,89 @@ def get_activity_datetime(messages: dict):
     return None
 
 
+def extract_file_user_name(fit_path: Path) -> str:
+    stem = fit_path.stem
+    if "_" in stem:
+        prefix, suffix = stem.rsplit("_", 1)
+        if suffix.isdigit() and prefix.strip():
+            return prefix.strip()
+    return ""
+
+
+def get_user_id(messages: dict):
+    file_id_mesgs = messages.get("file_id_mesgs", []) or []
+    if file_id_mesgs:
+        file_id = file_id_mesgs[0]
+        serial = file_id.get("serial_number")
+        if serial not in (None, "", 0):
+            return str(serial)
+
+    device_info_mesgs = messages.get("device_info_mesgs", []) or []
+    for item in device_info_mesgs:
+        if item.get("device_index") == "creator":
+            serial = item.get("serial_number")
+            if serial not in (None, "", 0):
+                return str(serial)
+
+    for item in device_info_mesgs:
+        serial = item.get("serial_number")
+        if serial not in (None, "", 0):
+            return str(serial)
+
+    return ""
+
+
+def get_user_name(messages: dict, fit_path: Path) -> str:
+    from_file_name = extract_file_user_name(fit_path)
+    if from_file_name:
+        return from_file_name
+
+    user_id = get_user_id(messages)
+    if user_id:
+        return f"user_{user_id}"
+    return "unknown_user"
+
+
+def get_activity_key(messages: dict, fit_path: Path) -> str:
+    user_id = get_user_id(messages) or "unknown"
+    session_mesgs = messages.get("session_mesgs", []) or []
+    activity_mesgs = messages.get("activity_mesgs", []) or []
+    file_id_mesgs = messages.get("file_id_mesgs", []) or []
+
+    parts = [user_id]
+
+    if session_mesgs:
+        session = session_mesgs[0]
+        for key in ("start_time", "timestamp"):
+            dt = to_datetime(session.get(key))
+            if dt:
+                parts.append(dt.isoformat())
+                break
+        total_elapsed = session.get("total_elapsed_time") or session.get("total_timer_time")
+        if total_elapsed not in (None, "", 0):
+            parts.append(str(round(float(total_elapsed), 2)))
+
+    if activity_mesgs:
+        activity = activity_mesgs[0]
+        dt = to_datetime(activity.get("timestamp"))
+        if dt:
+            parts.append(dt.isoformat())
+
+    if file_id_mesgs:
+        file_id = file_id_mesgs[0]
+        dt = to_datetime(file_id.get("time_created"))
+        if dt:
+            parts.append(dt.isoformat())
+        number = file_id.get("number")
+        if number not in (None, "", 0):
+            parts.append(str(number))
+
+    if len(parts) == 1:
+        parts.append(fit_path.stem)
+
+    return "|".join(parts)
+
+
 def map_stroke_label(raw_stroke) -> str:
     stroke = norm(raw_stroke)
 
@@ -231,4 +314,3 @@ def iter_target_swim_laps(messages: dict, interval_config: IntervalConfig):
             "lap_end": lap_end,
             "swim_type": "pool",
         }
-
