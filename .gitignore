@@ -1,0 +1,13 @@
+.DS_Store
+__pycache__/
+.venv/
+*.pyc
+
+# Generated report artifacts
+garmin_swim_fit_cache.pkl
+garmin_swim_intervals_details.csv
+garmin_swim_intervals_summary.csv
+
+
+FIT/
+fits/

@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Garmin Swim Dashboard</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Garmin Dev Dashboard</p>
+        <h1>Локальный отчёт по плавательным тренировкам</h1>
+        <p class="lead">
+          Дашборд строится на основе локальных FIT-файлов из папки <code>fits</code> и показывает
+          сводку по открытой воде и бассейну без запуска длинных консольных команд.
+        </p>
+      </div>
+      <div class="hero-card">
+        <div class="hero-item">
+          <span>Источник</span>
+          <strong>локальная папка Garmin Dev</strong>
+        </div>
+        <div class="hero-item">
+          <span>Экспорт</span>
+          <strong>CSV для Excel</strong>
+        </div>
+        <div class="hero-item">
+          <span>Сценарий</span>
+          <strong>dashboard на localhost</strong>
+        </div>
+      </div>
+    </section>
+
+    <section class="controls controls-primary">
+      <div class="control">
+        <label for="swimMode">Режим плавания</label>
+        <select id="swimMode">
+          <option value="all">Все</option>
+          <option value="open_water">Открытая вода</option>
+          <option value="pool">Бассейн</option>
+        </select>
+      </div>
+      <div class="control mode-control">
+        <label>Режим периода</label>
+        <div class="toggle-group">
+          <label class="toggle-option">
+            <input id="periodModePreset" type="radio" name="periodMode" value="preset" checked>
+            <span>Готовый период</span>
+          </label>
+          <label class="toggle-option">
+            <input id="periodModeCustom" type="radio" name="periodMode" value="custom">
+            <span>Свои N дней</span>
+          </label>
+        </div>
+      </div>
+      <div class="control" id="presetPeriodWrap">
+        <label for="period">Период</label>
+        <select id="period">
+          <option value="year">Последний год</option>
+          <option value="month">Последние 30 дней</option>
+          <option value="quarter">Последние 90 дней</option>
+          <option value="current_month">Текущий месяц</option>
+          <option value="last_month">Прошлый месяц</option>
+          <option value="all">Все данные</option>
+        </select>
+      </div>
+      <div class="control is-disabled" id="daysWrap">
+        <label for="days">Количество дней</label>
+        <input id="days" type="number" min="1" value="180" disabled>
+        <div class="control-note">Используется только в режиме «Свои N дней».</div>
+      </div>
+    </section>
+
+    <section class="controls controls-secondary">
+      <div class="control">
+        <label for="longMinDistance">Порог длинных дистанций</label>
+        <input id="longMinDistance" type="number" min="0" step="50" value="1000">
+      </div>
+      <div class="control actions">
+        <button id="loadButton">Обновить отчёт</button>
+        <button id="saveCsvButton" class="secondary">Пересобрать CSV</button>
+      </div>
+    </section>
+
+    <section class="panel compact-panel">
+      <div class="panel-header">
+        <h2>Дистанции отчёта</h2>
+      </div>
+      <div class="distance-summary">
+        <span class="muted">Выбрано:</span>
+        <strong id="selectedDistancesText">50, 100, 150, 200, 300, 400, 500, 600, 800, 1000</strong>
+      </div>
+      <div id="distancePicker" class="distance-picker"></div>
+    </section>
+
+    <section class="metrics" id="metrics"></section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2>Сводка по дистанциям</h2>
+        <div class="panel-actions">
+          <a id="summaryExport" class="link-button" href="#">Скачать summary CSV</a>
+          <a id="detailsExport" class="link-button" href="#">Скачать details CSV</a>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table id="summaryTable">
+          <thead>
+            <tr>
+              <th>Дистанция</th>
+              <th>Отрезков</th>
+              <th>Объём</th>
+              <th>Среднее время</th>
+              <th>Лучшее время</th>
+              <th>Лучший темп</th>
+              <th>Дата лучшего</th>
+              <th>Средний темп</th>
+              <th>Middle темп</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="panel">
+        <div class="panel-header">
+          <h2>Тренировки</h2>
+          <span id="workoutsHint" class="muted"></span>
+        </div>
+        <div class="table-wrap short">
+          <table id="workoutsTable">
+            <thead>
+              <tr>
+                <th>Дата</th>
+                <th>Отрезков</th>
+                <th>Объём</th>
+                <th>Время</th>
+                <th>Лучший темп</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-header">
+          <h2>Статус обработки</h2>
+        </div>
+        <div id="metaBox" class="meta-box"></div>
+      </article>
+    </section>
+
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
