@@ -107,6 +107,17 @@ def process_fit_file(fit_path_str: str, interval_config: IntervalConfig):
         activity_key = get_activity_key(messages, fit_path)
         user_id = get_user_id(messages) or "unknown"
         user_name = get_user_name(messages, fit_path)
+        session = (messages.get("session_mesgs") or [{}])[0]
+        workout_total_distance = session.get("total_distance")
+        workout_total_time = session.get("total_elapsed_time") or session.get("total_timer_time")
+        try:
+            workout_total_distance = round(float(workout_total_distance), 2) if workout_total_distance is not None else 0.0
+        except Exception:
+            workout_total_distance = 0.0
+        try:
+            workout_total_time = round(float(workout_total_time), 2) if workout_total_time is not None else 0.0
+        except Exception:
+            workout_total_time = 0.0
 
         out = []
         for lap in iter_target_swim_laps(messages, interval_config=interval_config):
@@ -122,6 +133,8 @@ def process_fit_file(fit_path_str: str, interval_config: IntervalConfig):
                 "raw_distance_m": lap["raw_distance_m"],
                 "time_s": round(lap["time_s"], 2),
                 "time_text": lap["time_text"],
+                "workout_total_distance_m": workout_total_distance,
+                "workout_total_time_s": workout_total_time,
                 "stroke": lap["stroke"],
                 "swim_type": lap["swim_type"],
                 "pace_100m_s": round(lap["pace_100m_s"], 2),
@@ -176,6 +189,8 @@ def write_detail_csv(detail_rows: list[dict], target_path: Path):
                 "raw_distance_m",
                 "time_s",
                 "time_text",
+                "workout_total_distance_m",
+                "workout_total_time_s",
                 "stroke",
                 "pace_100m_s",
                 "pace_100m",

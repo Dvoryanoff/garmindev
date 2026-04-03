@@ -171,14 +171,20 @@ def add_summary_columns_to_details(rows: list[dict], summary_rows: list[dict]) -
 def build_workout_groups(rows: list[dict]) -> list[dict]:
     groups = defaultdict(list)
     for row in rows:
-        workout_key = row.get("activity_date", "")[:10] or row.get("lap_start", "")[:10] or "unknown"
+        workout_key = row.get("activity_key") or row.get("activity_date", "")[:10] or row.get("lap_start", "")[:10] or "unknown"
         groups[workout_key].append(row)
 
     workouts = []
-    for workout_date in sorted(groups.keys(), reverse=True):
-        group = groups[workout_date]
-        total_distance = sum(r["distance_m"] for r in group)
-        total_time = sum(r["time_s"] for r in group)
+    def workout_sort_key(group: list[dict]) -> str:
+        sample = group[0] if group else {}
+        return sample.get("activity_date", "") or sample.get("lap_start", "") or ""
+
+    sorted_groups = sorted(groups.values(), key=workout_sort_key, reverse=True)
+    for group in sorted_groups:
+        sample = group[0]
+        workout_date = (sample.get("activity_date", "") or sample.get("lap_start", "") or "unknown")[:10]
+        total_distance = max((float(r.get("workout_total_distance_m", 0) or 0) for r in group), default=0.0)
+        total_time = max((float(r.get("workout_total_time_s", 0) or 0) for r in group), default=0.0)
         best_pace = min((r["pace_100m_s"] for r in group), default=0.0)
         swim_types = sorted({r["swim_type"] for r in group if r.get("swim_type")})
         workouts.append({

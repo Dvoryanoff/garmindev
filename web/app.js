@@ -18,7 +18,7 @@ const workoutsTableEl = document.querySelector("#workoutsTable tbody");
 const metaBoxEl = document.getElementById("metaBox");
 const workoutsHintEl = document.getElementById("workoutsHint");
 const summaryExportEl = document.getElementById("summaryExport");
-const detailsExportEl = document.getElementById("detailsExport");
+const workoutsExportEl = document.getElementById("workoutsExport");
 const heroSourceEl = document.getElementById("heroSource");
 const defaultSelectedDistances = new Set([50, 100, 150, 200, 300, 400, 500, 600, 800, 1000]);
 let runtimeStatusTimer = null;
@@ -212,8 +212,8 @@ async function loadReport({ persistCsv = false } = {}) {
 
   const query = buildQuery({ persistCsv });
   query.set("_ts", String(Date.now()));
-  summaryExportEl.href = `/api/export/summary.csv?${query.toString()}`;
-  detailsExportEl.href = `/api/export/details.csv?${query.toString()}`;
+  summaryExportEl.href = `/api/export/summary.xlsx?${query.toString()}`;
+  workoutsExportEl.href = `/api/export/workouts.xlsx?${query.toString()}`;
 
   try {
     const response = await fetch(`/api/report?${query.toString()}`, {

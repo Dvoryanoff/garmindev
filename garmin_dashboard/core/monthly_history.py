@@ -188,9 +188,10 @@ def build_monthly_entries(rows: list[dict]) -> list[dict]:
         for distance in MONTHLY_FIXED_DISTANCES:
             times = month_group.get(distance, [])
             if times:
-                avg_pace_s = (sum(times) / len(times) / distance) * 100.0
-                row[distance] = format_monthly_pace(avg_pace_s)
-                row[f"{distance}_s"] = round(avg_pace_s, 4)
+                best_time_s = min(times)
+                best_pace_s = (best_time_s / distance) * 100.0
+                row[distance] = format_monthly_pace(best_pace_s)
+                row[f"{distance}_s"] = round(best_pace_s, 4)
             else:
                 row[distance] = ""
                 row[f"{distance}_s"] = None

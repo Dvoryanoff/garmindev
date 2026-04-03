@@ -103,8 +103,7 @@
       <div class="panel-header">
         <h2>Сводка по дистанциям</h2>
         <div class="panel-actions">
-          <a id="summaryExport" class="link-button" href="#">Скачать summary CSV</a>
-          <a id="detailsExport" class="link-button" href="#">Скачать details CSV</a>
+          <a id="summaryExport" class="link-button" href="#">Скачать Excel</a>
         </div>
       </div>
       <div class="table-wrap">
@@ -130,7 +129,10 @@
       <article class="panel">
         <div class="panel-header">
           <h2>Тренировки</h2>
-          <span id="workoutsHint" class="muted"></span>
+          <div class="panel-actions">
+            <span id="workoutsHint" class="muted"></span>
+            <a id="workoutsExport" class="link-button" href="#">Скачать Excel</a>
+          </div>
         </div>
         <div class="table-wrap short">
           <table id="workoutsTable">

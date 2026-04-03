@@ -1,5 +1,3 @@
-import csv
-import io
 import json
 import threading
 import urllib.parse
@@ -21,6 +19,7 @@ from garmin_dashboard.core.config import (
 )
 from garmin_dashboard.core.dataset import clear_cache_file
 from garmin_dashboard.core.monthly_history import refresh_monthly_history
+from garmin_dashboard.core.xlsx_export import build_workbook_bytes
 from .reports import build_report
 
 
@@ -80,11 +79,11 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/report":
             self.handle_report(parsed.query)
             return
-        if parsed.path == "/api/export/details.csv":
-            self.handle_export(parsed.query, kind="details")
+        if parsed.path == "/api/export/summary.xlsx":
+            self.handle_excel_export(parsed.query, kind="summary")
             return
-        if parsed.path == "/api/export/summary.csv":
-            self.handle_export(parsed.query, kind="summary")
+        if parsed.path == "/api/export/workouts.xlsx":
+            self.handle_excel_export(parsed.query, kind="workouts")
             return
         if parsed.path == "/":
             self.path = "/index.html"
@@ -98,21 +97,53 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
         except Exception as exc:
             self.send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
 
-    def handle_export(self, query: str, kind: str):
+    def handle_excel_export(self, query: str, kind: str):
         params = urllib.parse.parse_qs(query)
         try:
             report = build_report(build_request_from_params(params))
-            rows = report[kind]
-            buffer = io.StringIO()
-            fieldnames = list(rows[0].keys()) if rows else []
-            writer = csv.DictWriter(buffer, fieldnames=fieldnames)
-            if fieldnames:
-                writer.writeheader()
-                writer.writerows(rows)
-            filename = f"garmin_{kind}_{report['filters']['swim_mode']}_{report['filters']['period']}.csv"
-            payload = buffer.getvalue().encode("utf-8-sig")
+            if kind == "summary":
+                headers = [
+                    "Дистанция",
+                    "Отрезков",
+                    "Среднее время",
+                    "Лучшее время",
+                    "Лучший темп",
+                    "Дата лучшего",
+                    "Средний темп",
+                    "Middle темп",
+                ]
+                rows = [
+                    [
+                        f"{row['distance_m']} м",
+                        row["count"],
+                        row["avg_time"],
+                        row["best_time"],
+                        row["best_pace_100m"],
+                        row["best_pace_date"],
+                        row["avg_pace_100m"],
+                        row["middle_pace_100m"],
+                    ]
+                    for row in report["summary"]
+                ]
+                sheet_name = "Сводка по дистанциям"
+                filename = "Сводка по дистанциям.xlsx"
+            else:
+                headers = ["Дата", "Общее расстояние", "Время", "Лучший темп"]
+                rows = [
+                    [
+                        row["date"],
+                        f"{row['total_distance_m']} м",
+                        row["total_time"],
+                        row["best_pace_100m"],
+                    ]
+                    for row in report["workouts"]
+                ]
+                sheet_name = "Тренировки"
+                filename = "Тренировки.xlsx"
+
+            payload = build_workbook_bytes(sheet_name=sheet_name, headers=headers, rows=rows)
             self.send_response(HTTPStatus.OK)
-            self.send_header("Content-Type", "text/csv; charset=utf-8")
+            self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()

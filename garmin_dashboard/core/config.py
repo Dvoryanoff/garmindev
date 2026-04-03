@@ -57,7 +57,7 @@ class ReportRequest:
 
 def folder_contains_fit_files(path: Path) -> bool:
     try:
-        return any(child.is_file() and child.suffix.lower() == ".fit" for child in path.iterdir())
+        return any(child.is_file() and child.suffix.lower() == ".fit" for child in path.rglob("*"))
     except Exception:
         return False
 
@@ -67,7 +67,7 @@ def list_resource_dirs(root: Path | None = None) -> list[Path]:
     if not root.exists():
         return []
     candidates = []
-    for child in sorted(root.rglob("*"), key=lambda p: str(p).lower()):
+    for child in sorted(root.iterdir(), key=lambda p: str(p).lower()):
         if not child.is_dir():
             continue
         if child.name.startswith("."):

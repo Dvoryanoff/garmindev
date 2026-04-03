@@ -33,7 +33,7 @@ class MonthlyHistoryTestCase(unittest.TestCase):
         self.assertEqual([row["date"] for row in monthly_rows], ["Январь 2024", "Февраль 2024", "Март 2024"])
         self.assertEqual(monthly_rows[1][100], "")
 
-    def test_build_monthly_entries_keeps_requested_fixed_distances(self):
+    def test_build_monthly_entries_uses_best_monthly_pace(self):
         rows = [
             {
                 "activity_date": "2024-05-10 08:00:00",
@@ -55,9 +55,31 @@ class MonthlyHistoryTestCase(unittest.TestCase):
         self.assertEqual(len(monthly_rows), 1)
         may = monthly_rows[0]
         self.assertEqual(may["date"], "Май 2024")
-        self.assertEqual(may[400], "1:42.5")
+        self.assertEqual(may[400], "1:40.0")
         self.assertIn(1500, MONTHLY_FIXED_DISTANCES)
         self.assertIn(1800, MONTHLY_FIXED_DISTANCES)
+
+    def test_build_monthly_entries_uses_fastest_interval_not_average(self):
+        rows = [
+            {
+                "activity_date": "2021-04-02 08:00:00",
+                "lap_start": "2021-04-02 08:00:00",
+                "lap_end": "2021-04-02 08:02:00",
+                "distance_m": 100,
+                "time_s": 81,
+            },
+            {
+                "activity_date": "2021-04-10 08:00:00",
+                "lap_start": "2021-04-10 08:00:00",
+                "lap_end": "2021-04-10 08:02:00",
+                "distance_m": 100,
+                "time_s": 103,
+            },
+        ]
+
+        monthly_rows = build_monthly_entries(rows)
+        self.assertEqual(monthly_rows[0]["date"], "Апрель 2021")
+        self.assertEqual(monthly_rows[0][100], "1:21.0")
 
     def test_dedupe_workouts_keeps_unique_activity_keys(self):
         workouts = {
