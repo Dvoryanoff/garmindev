@@ -8,6 +8,7 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 
 from .config import CACHE_VERSION, MONTHLY_FIXED_DISTANCES, MONTHLY_HISTORY_DIR, RESOURCES_DIR, IntervalConfig, RuntimeConfig
+from .db_ingest import load_report_rows
 from .dataset import find_fit_files, process_batches
 from .utils import pace_str_precise, to_datetime
 
@@ -489,3 +490,148 @@ def refresh_monthly_history(runtime_config: RuntimeConfig) -> dict:
         "processed_files": len(paths_to_process),
         "duplicate_files": duplicate_files,
     }
+
+
+def refresh_monthly_history_from_database(runtime_config: RuntimeConfig) -> dict:
+    rows, _ = load_report_rows(
+        runtime_config=RuntimeConfig(
+            fit_dir=runtime_config.fit_dir,
+            detail_csv=runtime_config.detail_csv,
+            summary_csv=runtime_config.summary_csv,
+            cache_file=runtime_config.cache_file,
+            database_url=runtime_config.database_url,
+            db_auto_ingest=False,
+            max_workers=runtime_config.max_workers,
+            batch_size=runtime_config.batch_size,
+        ),
+        swim_mode="all",
+        start_date="",
+        end_date="",
+    )
+
+    grouped = defaultdict(list)
+    for row in rows:
+        activity_key = row.get("activity_key") or "unknown"
+        grouped[activity_key].append(row)
+
+    workouts_state = {}
+    for activity_key, activity_rows in grouped.items():
+        sample = activity_rows[0]
+        user_id = sample.get("user_id") or "unknown"
+        user_name = sample.get("user_name") or f"user_{user_id}"
+        workouts_state[activity_key] = {
+            "activity_key": activity_key,
+            "user_id": user_id,
+            "user_name": user_name,
+            "rows": activity_rows,
+        }
+
+    entries_by_user = build_entries_by_user(workouts_state)
+    workbook_files = []
+    suffix_to_target = {}
+    for (user_id, user_name), entries in entries_by_user.items():
+        workbook_path = workbook_path_for_user(user_name, user_id)
+        write_workbook(entries, workbook_path)
+        workbook_files.append(str(workbook_path))
+        suffix_to_target[workbook_suffix_for_user(user_id)] = workbook_path.resolve()
+
+    current_workbooks = {Path(path).resolve() for path in workbook_files}
+    for stale_workbook in MONTHLY_HISTORY_DIR.glob("*.xlsx"):
+        resolved = stale_workbook.resolve()
+        if resolved not in current_workbooks:
+            try:
+                suffix = stale_workbook.stem.split("_")[-1]
+                target = suffix_to_target.get(suffix)
+                if target is None or resolved != target:
+                    stale_workbook.unlink()
+            except Exception:
+                pass
+
+    for temp_workbook in MONTHLY_HISTORY_DIR.glob("~$*.xlsx"):
+        try:
+            temp_workbook.unlink()
+        except Exception:
+            pass
+
+    return {
+        "resource_dir": str(runtime_config.fit_dir),
+        "workbook_files": workbook_files,
+        "users": len(entries_by_user),
+        "workouts": len(workouts_state),
+        "total_files": 0,
+        "cached_files": 0,
+        "processed_files": 0,
+        "duplicate_files": 0,
+    }
+
+
+def monthly_rows_to_entries(rows: list[dict]) -> list[dict]:
+    grouped: dict[tuple[int, int], dict] = {}
+    for row in rows:
+        year = int(row.get("year") or 0)
+        month = int(row.get("month") or 0)
+        if not year or not month:
+            continue
+        key = (year, month)
+        entry = grouped.setdefault(
+            key,
+            {
+                "year": year,
+                "date": f"{MONTH_NAMES_RU[month]} {year}",
+            },
+        )
+        distance = int(row.get("distance_m") or 0)
+        entry[distance] = row.get("best_pace_text", "")
+        entry[f"{distance}_s"] = row.get("best_pace_s")
+
+    if not grouped:
+        return []
+    return [grouped[key] for key in sorted(grouped.keys(), reverse=True)]
+
+
+def build_monthly_history_payload(rows: list[dict]) -> dict:
+    entries = monthly_rows_to_entries(rows)
+    headers = [50, 100, 200, 400, 800, 1000, 1200, 1500, 1800]
+    years = sorted({entry["year"] for entry in entries}, reverse=True)
+    best_by_year_distance = {}
+    for year in years:
+        for distance in headers:
+            values = [entry.get(f"{distance}_s") for entry in entries if entry.get("year") == year and entry.get(f"{distance}_s") is not None]
+            best_by_year_distance[(year, distance)] = min(values) if values else None
+    return {
+        "headers": headers,
+        "years": years,
+        "rows": [
+            {
+                "year": entry["year"],
+                "month": entry["date"].split(" ")[0],
+                "date": entry["date"],
+                "values": [
+                    {
+                        "text": entry.get(distance, ""),
+                        "best": (
+                            entry.get(f"{distance}_s") is not None
+                            and best_by_year_distance.get((entry["year"], distance)) is not None
+                            and entry.get(f"{distance}_s") == best_by_year_distance.get((entry["year"], distance))
+                        ),
+                    }
+                    for distance in headers
+                ],
+            }
+            for entry in entries
+        ],
+    }
+
+
+def build_monthly_history_workbook_bytes(rows: list[dict]) -> bytes:
+    entries = monthly_rows_to_entries(rows)
+    with tempfile.NamedTemporaryFile(mode="wb", suffix=".xlsx", delete=False) as fh:
+        tmp_path = Path(fh.name)
+    try:
+        write_workbook(entries, tmp_path)
+        return tmp_path.read_bytes()
+    finally:
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass

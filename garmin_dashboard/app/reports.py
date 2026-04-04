@@ -3,8 +3,17 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 
 from garmin_dashboard.core.config import RESOURCES_DIR, ReportRequest
-from garmin_dashboard.core.dataset import generate_dataset, write_detail_csv, write_summary_csv
+from garmin_dashboard.core.dataset import write_detail_csv, write_summary_csv
+from garmin_dashboard.core.db_ingest import load_report_rows
+from garmin_dashboard.core.fit_parser import summary_distance
 from garmin_dashboard.core.utils import format_duration, norm, pace_str, pace_str_precise, to_datetime
+
+
+def resource_dir_label(path) -> str:
+    try:
+        return str(path.relative_to(RESOURCES_DIR))
+    except Exception:
+        return str(path)
 
 
 def row_activity_date(row: dict):
@@ -13,6 +22,21 @@ def row_activity_date(row: dict):
         if dt:
             return dt.date()
     return None
+
+
+def row_matches_interval_config(row: dict, request: ReportRequest) -> bool:
+    distance = summary_distance(
+        float(row.get("raw_distance_m") or row.get("distance_m") or 0),
+        str(row.get("stroke") or ""),
+        str(row.get("swim_type") or ""),
+        request.interval_config,
+    )
+    if distance is None:
+        return False
+    if distance not in request.interval_config.target_distances:
+        return False
+    row["distance_m"] = distance
+    return True
 
 
 def resolve_period(period: str = "current_year", days: int | None = None, today: date | None = None):
@@ -204,16 +228,21 @@ def build_workout_groups(rows: list[dict]) -> list[dict]:
 
 
 def build_report(request: ReportRequest) -> dict:
-    dataset = generate_dataset(
-        runtime_config=request.runtime_config,
-        interval_config=request.interval_config,
-    )
+    if request.owner_account_id is None:
+        raise ValueError("owner_account_id is required")
     start_date, end_date, period_label = resolve_period(period=request.period, days=request.days)
-
+    filtered_rows, db_meta = load_report_rows(
+        runtime_config=request.runtime_config,
+        owner_account_id=request.owner_account_id,
+        swim_mode=request.swim_mode,
+        start_date=start_date.isoformat() if start_date else "",
+        end_date=end_date.isoformat() if end_date else "",
+    )
     filtered_rows = [
-        row for row in dataset["rows"]
+        row for row in filtered_rows
         if row_matches_filters(row, start_date=start_date, end_date=end_date, swim_mode=request.swim_mode)
     ]
+    filtered_rows = [row for row in filtered_rows if row_matches_interval_config(row, request)]
     filtered_rows.sort(key=lambda r: (r["activity_date"], r["lap_start"], r["file_name"]))
 
     summary_rows = build_summary(filtered_rows) if filtered_rows else []
@@ -231,21 +260,41 @@ def build_report(request: ReportRequest) -> dict:
         write_detail_csv(detail_rows, request.runtime_config.detail_csv)
         write_summary_csv(summary_rows, request.runtime_config.summary_csv)
 
-    dataset["meta"]["generated_at"] = datetime.now().isoformat(timespec="seconds")
+    dataset_meta = {
+        "fit_dir": resource_dir_label(request.runtime_config.fit_dir),
+        "cached_files": 0,
+        "processed_files": 0,
+        "processed_rows": 0,
+        "deleted_files": 0,
+        "ignored_files": db_meta.get("ignored_files", 0),
+        "error_files": db_meta.get("error_files", 0),
+        "duplicate_files": db_meta.get("duplicate_files", 0),
+        "ready_files": db_meta.get("ready_files", 0),
+        "max_workers": request.runtime_config.max_workers,
+        "batch_size": request.runtime_config.batch_size,
+        "timings": {},
+        "db_total_files": db_meta.get("total_files", 0),
+        "db_ready_files": db_meta.get("ready_files", 0),
+        "db_ignored_files": db_meta.get("ignored_files", 0),
+        "db_error_files": db_meta.get("error_files", 0),
+        "db_duplicate_files": db_meta.get("duplicate_files", 0),
+        "db_total_rows": db_meta.get("total_rows", 0),
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+    }
 
     return {
         "filters": {
             "swim_mode": request.swim_mode,
             "period": request.period,
             "days": request.days,
-            "resource_dir": str(request.runtime_config.fit_dir.relative_to(RESOURCES_DIR)),
+            "resource_dir": "user_uploads",
             "period_label": period_label,
             "date_start": start_date.isoformat() if start_date else "",
             "date_end": end_date.isoformat() if end_date else "",
             "target_distances": list(request.interval_config.target_distances),
             "long_freestyle_min_distance_m": request.interval_config.long_freestyle_min_distance_m,
         },
-        "dataset_meta": dataset["meta"],
+        "dataset_meta": dataset_meta,
         "overview": {
             "intervals": len(filtered_rows),
             "workouts": len(workouts),

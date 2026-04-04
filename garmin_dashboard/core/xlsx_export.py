@@ -41,9 +41,10 @@ def build_sheet_xml(rows: list[list[dict]], widths: list[float]) -> str:
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
         '<sheetPr><outlinePr summaryBelow="1" summaryRight="1"/></sheetPr>'
+        f'<dimension ref="A1:{column_name(len(widths))}{max(len(rows), 1)}"/>'
+        '<sheetViews><sheetView workbookViewId="0" tabSelected="1"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'
         '<sheetFormatPr defaultRowHeight="18"/>'
         f'{build_columns_xml(widths)}'
-        '<sheetViews><sheetView workbookViewId="0" tabSelected="1"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'
         f'<sheetData>{"".join(xml_rows)}</sheetData>'
         f'<autoFilter ref="A1:{column_name(len(widths))}{len(rows)}"/>'
         "</worksheet>"

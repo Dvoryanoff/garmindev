@@ -6,8 +6,8 @@ import webbrowser
 from garmin_dashboard.app.server import run_server
 
 
-HOST = "127.0.0.1"
-PORT = 8000
+HOST = os.getenv("GARMIN_HOST", "127.0.0.1")
+PORT = int(os.getenv("GARMIN_PORT", "8000"))
 
 
 def should_open_browser() -> bool:

@@ -4,162 +4,256 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Garmin Swim Dashboard</title>
-  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/style.css?v=20260404g">
 </head>
 <body>
   <main class="page">
-    <section class="hero">
-      <div>
-        <p class="eyebrow">Garmin Dev Dashboard</p>
-        <h1>Локальный отчёт по плавательным тренировкам</h1>
-        <p class="lead">
-          Дашборд строится на основе локальных FIT-файлов из папки <code>resources</code> и показывает
-          сводку по открытой воде и бассейну без запуска длинных консольных команд.
-        </p>
+    <section id="authView" class="auth-shell">
+      <div class="auth-hero">
+        <p class="eyebrow">Garmin Data Hub</p>
+        <h1>Личный кабинет для загрузки FIT-файлов и персональной аналитики</h1>
+        <p class="lead">Загрузи свои тренировки, система сама заберёт данные в базу, а дашборд будет работать только с твоей учёткой.</p>
       </div>
-      <div class="hero-card">
-        <div class="hero-item">
-          <span>Источник</span>
-          <strong id="heroSource">локальная папка Garmin Dev</strong>
-          <select id="resourceDir" class="hero-select"></select>
-        </div>
-        <div class="hero-item">
-          <span>Экспорт</span>
-          <strong>CSV для Excel</strong>
-        </div>
-        <div class="hero-item">
-          <span>Сценарий</span>
-          <strong>dashboard на localhost</strong>
-        </div>
+      <div id="authChooser" class="auth-chooser">
+        <button id="showLoginButton">Войти</button>
+        <button id="showRegisterButton" class="secondary">Зарегистрироваться</button>
       </div>
-    </section>
-
-    <section class="controls controls-primary">
-      <div class="control">
-        <label for="swimMode">Режим плавания</label>
-        <select id="swimMode">
-          <option value="all">Все</option>
-          <option value="open_water">Открытая вода</option>
-          <option value="pool">Бассейн</option>
-        </select>
-      </div>
-      <div class="control mode-control">
-        <label>Режим периода</label>
-        <div class="toggle-group">
-          <label class="toggle-option">
-            <input id="periodModePreset" type="radio" name="periodMode" value="preset" checked>
-            <span>Готовый период</span>
-          </label>
-          <label class="toggle-option">
-            <input id="periodModeCustom" type="radio" name="periodMode" value="custom">
-            <span>Свои N дней</span>
-          </label>
-        </div>
-      </div>
-      <div class="control" id="presetPeriodWrap">
-        <label for="period">Период</label>
-        <select id="period">
-          <option value="current_year" selected>Текущий год</option>
-          <option value="year">Последний год</option>
-          <option value="month">Последние 30 дней</option>
-          <option value="quarter">Последние 90 дней</option>
-          <option value="current_month">Текущий месяц</option>
-          <option value="last_month">Прошлый месяц</option>
-          <option value="all">Все данные</option>
-        </select>
-      </div>
-      <div class="control is-disabled" id="daysWrap">
-        <label for="days">Количество дней</label>
-        <input id="days" type="number" min="1" value="180" disabled>
-        <div class="control-note">Используется только в режиме «Свои N дней».</div>
+      <div id="authForms" class="auth-forms-wrap" hidden>
+        <section id="loginCard" class="panel auth-card" hidden>
+          <h2>Вход</h2>
+          <div id="loginStatus" class="form-status" hidden></div>
+          <label for="loginEmail">E-mail</label>
+          <input id="loginEmail" type="email" autocomplete="username">
+          <label for="loginPassword">Пароль</label>
+          <input id="loginPassword" type="password" autocomplete="current-password">
+          <button id="loginButton">Войти</button>
+          <button id="backFromLoginButton" class="secondary">Назад</button>
+        </section>
+        <section id="registerCard" class="panel auth-card" hidden>
+          <h2>Регистрация</h2>
+          <div id="registerStatus" class="form-status" hidden></div>
+          <label for="registerFirstName">Имя</label>
+          <input id="registerFirstName" type="text" autocomplete="given-name">
+          <label for="registerLastName">Фамилия</label>
+          <input id="registerLastName" type="text" autocomplete="family-name">
+          <label for="registerEmail">E-mail</label>
+          <input id="registerEmail" type="email" autocomplete="email">
+          <label for="registerPassword">Пароль</label>
+          <input id="registerPassword" type="password" autocomplete="new-password">
+          <button id="registerButton" class="secondary">Создать аккаунт</button>
+          <button id="backFromRegisterButton" class="secondary">Назад</button>
+        </section>
       </div>
     </section>
 
-    <section class="controls controls-secondary">
-      <div class="control">
-        <label for="longMinDistance">Порог длинных дистанций</label>
-        <input id="longMinDistance" type="number" min="0" step="50" value="1000">
-      </div>
-      <div class="control actions">
-        <button id="loadButton">Обновить отчёт</button>
-        <button id="saveCsvButton" class="secondary">Пересобрать CSV</button>
-      </div>
-    </section>
-
-    <section class="panel compact-panel">
-      <div class="panel-header">
-        <h2>Дистанции отчёта</h2>
-      </div>
-      <div class="distance-summary">
-        <span class="muted">Выбрано:</span>
-        <strong id="selectedDistancesText">50, 100, 150, 200, 300, 400, 500, 600, 800, 1000</strong>
-      </div>
-      <div id="distancePicker" class="distance-picker"></div>
-    </section>
-
-    <section class="metrics" id="metrics"></section>
-    <section id="runtimeBanner" class="runtime-banner is-hidden"></section>
-
-    <section class="panel">
-      <div class="panel-header">
-        <h2>Сводка по дистанциям</h2>
-        <div class="panel-actions">
-          <a id="summaryExport" class="link-button" href="#">Скачать Excel</a>
+    <section id="appView" hidden>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Garmin Dashboard</p>
+          <h1>Персональная база тренировок и быстрые отчёты</h1>
+          <p class="lead">Все метрики строятся только по данным текущего пользователя. Новые FIT-файлы можно догружать в любой момент.</p>
         </div>
-      </div>
-      <div class="table-wrap">
-        <table id="summaryTable">
-          <thead>
-            <tr>
-              <th>Дистанция</th>
-              <th>Отрезков</th>
-              <th>Среднее время</th>
-              <th>Лучшее время</th>
-              <th>Лучший темп</th>
-              <th>Дата лучшего</th>
-              <th>Средний темп</th>
-              <th>Middle темп</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </section>
+        <div class="hero-card">
+          <div class="hero-item">
+            <span>Пользователь</span>
+            <strong id="accountName">—</strong>
+          </div>
+          <div class="hero-item">
+            <span>E-mail</span>
+            <strong id="accountEmail">—</strong>
+          </div>
+          <div class="hero-item">
+            <span>Роль</span>
+            <strong id="accountRole">user</strong>
+          </div>
+          <a id="adminLink" href="/admin" class="link-button wide" hidden>Открыть админку</a>
+          <button id="logoutButton" class="secondary wide">Выйти</button>
+        </div>
+      </section>
 
-    <section class="grid">
-      <article class="panel">
+      <section id="uploadOnlyState" class="panel upload-panel" hidden>
         <div class="panel-header">
-          <h2>Тренировки</h2>
-          <div class="panel-actions">
-            <span id="workoutsHint" class="muted"></span>
-            <a id="workoutsExport" class="link-button" href="#">Скачать Excel</a>
+          <h2>Начни с загрузки FIT-файлов</h2>
+        </div>
+        <p class="lead compact-lead">Это первая сессия для этого аккаунта. Сначала загрузим и обработаем файлы, а после этого автоматически откроем отчёты.</p>
+        <div class="upload-grid">
+          <div class="upload-picker">
+            <div class="upload-actions">
+              <button id="pickFilesButtonEmpty" type="button" class="secondary">Выбрать файлы</button>
+              <button id="pickFolderButtonEmpty" type="button" class="secondary">Выбрать папку</button>
+            </div>
+            <div id="uploadSelectionEmpty" class="upload-selection">Файлы не выбраны</div>
+            <input id="uploadInputEmpty" type="file" accept=".fit" multiple hidden>
+            <input id="uploadFolderInputEmpty" type="file" accept=".fit" webkitdirectory directory multiple hidden>
+          </div>
+          <button id="uploadButtonEmpty">Загрузить и обработать</button>
+        </div>
+        <div id="uploadHintEmpty" class="control-note">Можно выбрать отдельные `.fit` файлы или целую папку. Загрузка пойдёт пакетами.</div>
+      </section>
+
+      <section id="dashboardContent" hidden>
+      <section class="panel upload-panel">
+        <div class="panel-header">
+          <h2>Загрузка FIT-файлов</h2>
+        </div>
+        <div class="upload-grid">
+          <div class="upload-picker">
+            <div class="upload-actions">
+              <button id="pickFilesButton" type="button" class="secondary">Выбрать файлы</button>
+              <button id="pickFolderButton" type="button" class="secondary">Выбрать папку</button>
+            </div>
+            <div id="uploadSelection" class="upload-selection">Файлы не выбраны</div>
+            <input id="uploadInput" type="file" accept=".fit" multiple hidden>
+            <input id="uploadFolderInput" type="file" accept=".fit" webkitdirectory directory multiple hidden>
+          </div>
+          <button id="uploadButton">Загрузить и обработать</button>
+        </div>
+        <div id="uploadHint" class="control-note">Старые файлы будут проигнорированы по hash, новые тренировки попадут в базу пользователя. Можно загружать и папкой.</div>
+      </section>
+
+      <section class="controls controls-primary">
+        <div class="control">
+          <label for="swimMode">Режим плавания</label>
+          <select id="swimMode">
+            <option value="all">Все</option>
+            <option value="open_water">Открытая вода</option>
+            <option value="pool">Бассейн</option>
+          </select>
+        </div>
+        <div class="control mode-control">
+          <label>Режим периода</label>
+          <div class="toggle-group">
+            <label class="toggle-option">
+              <input id="periodModePreset" type="radio" name="periodMode" value="preset" checked>
+              <span>Готовый период</span>
+            </label>
+            <label class="toggle-option">
+              <input id="periodModeCustom" type="radio" name="periodMode" value="custom">
+              <span>Свои N дней</span>
+            </label>
           </div>
         </div>
-        <div class="table-wrap short">
-          <table id="workoutsTable">
+        <div class="control" id="presetPeriodWrap">
+          <label for="period">Период</label>
+          <select id="period">
+            <option value="current_year">Текущий год</option>
+            <option value="year">Последний год</option>
+            <option value="month">Последние 30 дней</option>
+            <option value="quarter">Последние 90 дней</option>
+            <option value="current_month">Текущий месяц</option>
+            <option value="last_month">Прошлый месяц</option>
+            <option value="all">Все данные</option>
+          </select>
+        </div>
+        <div class="control is-disabled" id="daysWrap">
+          <label for="days">Количество дней</label>
+          <input id="days" type="number" min="1" value="180" disabled>
+          <div class="control-note">Используется только в режиме «Свои N дней».</div>
+        </div>
+      </section>
+
+      <section class="controls controls-secondary">
+        <div class="control">
+          <label for="longMinDistance">Порог длинных дистанций</label>
+          <input id="longMinDistance" type="number" min="0" step="50" value="1000">
+        </div>
+        <div class="control actions">
+          <button id="loadButton">Обновить отчёт</button>
+        </div>
+      </section>
+
+      <section class="panel compact-panel">
+        <div class="panel-header">
+          <h2>Дистанции отчёта</h2>
+        </div>
+        <div class="distance-summary">
+          <span class="muted">Выбрано:</span>
+          <strong id="selectedDistancesText">50, 100, 150, 200, 300, 400, 500, 600, 800, 1000</strong>
+        </div>
+        <div id="distancePicker" class="distance-picker"></div>
+      </section>
+
+      <section class="metrics" id="metrics"></section>
+      <section id="runtimeBanner" class="runtime-banner is-hidden"></section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Сводка по дистанциям</h2>
+          <div class="panel-actions">
+            <a id="summaryExport" class="link-button" href="#">Скачать Excel</a>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table id="summaryTable">
             <thead>
               <tr>
-                <th>Дата</th>
-                <th>Объём</th>
-                <th>Время</th>
+                <th>Дистанция</th>
+                <th>Отрезков</th>
+                <th>Среднее время</th>
+                <th>Лучшее время</th>
                 <th>Лучший темп</th>
+                <th>Дата лучшего</th>
+                <th>Средний темп</th>
+                <th>Middle темп</th>
               </tr>
             </thead>
             <tbody></tbody>
           </table>
         </div>
-      </article>
+      </section>
 
-      <article class="panel">
+      <section class="grid">
+        <article class="panel">
+          <div class="panel-header">
+            <h2>Тренировки</h2>
+            <div class="panel-actions">
+              <span id="workoutsHint" class="muted"></span>
+              <a id="workoutsExport" class="link-button" href="#">Скачать Excel</a>
+            </div>
+          </div>
+          <div class="table-wrap short">
+            <table id="workoutsTable">
+              <thead>
+                <tr>
+                  <th>Дата</th>
+                  <th>Объём</th>
+                  <th>Время</th>
+                  <th>Лучший темп</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-header">
+            <h2>Статус данных</h2>
+          </div>
+          <div id="metaBox" class="meta-box"></div>
+        </article>
+      </section>
+
+      <section class="panel">
         <div class="panel-header">
-          <h2>Статус обработки</h2>
+          <h2>Помесячная история</h2>
+          <div class="panel-actions">
+            <select id="monthlyYearSelect" class="year-select"></select>
+            <a id="monthlyExport" class="link-button" href="/api/export/monthly-history.xlsx">Скачать Excel</a>
+          </div>
         </div>
-        <div id="metaBox" class="meta-box"></div>
-      </article>
+        <div class="table-wrap">
+          <table id="monthlyTable">
+            <thead>
+              <tr id="monthlyHeaderRow"></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+      </section>
     </section>
-
   </main>
-
-  <script src="/app.js"></script>
+  <script src="/app.js?v=20260404g"></script>
 </body>
 </html>

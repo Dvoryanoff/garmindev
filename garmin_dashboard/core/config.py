@@ -4,16 +4,48 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RESOURCES_DIR = PROJECT_ROOT / "resources"
-FIT_DIR = RESOURCES_DIR / "FIT"
-DETAIL_CSV = PROJECT_ROOT / "garmin_swim_intervals_details.csv"
-SUMMARY_CSV = PROJECT_ROOT / "garmin_swim_intervals_summary.csv"
-CACHE_FILE = PROJECT_ROOT / "garmin_swim_fit_cache.pkl"
-MONTHLY_HISTORY_DIR = PROJECT_ROOT / "monthly_history"
+
+
+def _env_path(name: str, default: Path) -> Path:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    return path
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+RESOURCES_DIR = _env_path("GARMIN_RESOURCES_DIR", PROJECT_ROOT / "resources")
+FIT_DIR = _env_path("GARMIN_FIT_DIR", RESOURCES_DIR / "FIT")
+DETAIL_CSV = _env_path("GARMIN_DETAIL_CSV", PROJECT_ROOT / "garmin_swim_intervals_details.csv")
+SUMMARY_CSV = _env_path("GARMIN_SUMMARY_CSV", PROJECT_ROOT / "garmin_swim_intervals_summary.csv")
+CACHE_FILE = _env_path("GARMIN_CACHE_FILE", PROJECT_ROOT / "garmin_swim_fit_cache.pkl")
+MONTHLY_HISTORY_DIR = _env_path("GARMIN_MONTHLY_HISTORY_DIR", PROJECT_ROOT / "monthly_history")
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{PROJECT_ROOT / 'garmin_dashboard.db'}")
+DB_AUTO_INGEST = os.getenv("GARMIN_DB_AUTO_INGEST", "1").strip().lower() not in {"0", "false", "no", "off"}
+UPLOAD_DIR = _env_path("GARMIN_UPLOAD_DIR", PROJECT_ROOT / "uploads")
+SESSION_TTL_DAYS = _env_int("GARMIN_SESSION_TTL_DAYS", 30)
+SUPERADMIN_EMAIL = os.getenv("GARMIN_SUPERADMIN_EMAIL", "admin-admin@local").strip().lower()
+SUPERADMIN_PASSWORD = os.getenv("GARMIN_SUPERADMIN_PASSWORD", "admin-admin").strip() or "admin-admin"
+SUPERADMIN_FIRST_NAME = os.getenv("GARMIN_SUPERADMIN_FIRST_NAME", "Admin").strip() or "Admin"
+SUPERADMIN_LAST_NAME = os.getenv("GARMIN_SUPERADMIN_LAST_NAME", "Admin").strip() or "Admin"
 
 MONTHLY_FIXED_DISTANCES = (50, 100, 200, 400, 800, 1000, 1200, 1500, 1800)
 
 CACHE_VERSION = 7
+PARSER_VERSION = CACHE_VERSION + 1001
 
 POOL_SUBSPORTS = {"lap_swimming", "pool_swimming", "lap", "pool", ""}
 OPEN_WATER_SUBSPORTS = {"open_water", "open_water_swimming", "open_water_swim"}
@@ -22,8 +54,8 @@ ALL_SUPPORTED_SUBSPORTS = POOL_SUBSPORTS | OPEN_WATER_SUBSPORTS
 DEVICE_CPU_COUNT = max(1, os.cpu_count() or 1)
 # Локальный benchmark на этом arm64 Mac показал лучший результат на 300 FIT:
 # workers=4, batch_size=100.
-DEFAULT_MAX_WORKERS = min(4, DEVICE_CPU_COUNT)
-DEFAULT_BATCH_SIZE = 100
+DEFAULT_MAX_WORKERS = _env_int("GARMIN_MAX_WORKERS", min(4, DEVICE_CPU_COUNT))
+DEFAULT_BATCH_SIZE = _env_int("GARMIN_BATCH_SIZE", 100)
 
 
 @dataclass(frozen=True)
@@ -41,6 +73,9 @@ class RuntimeConfig:
     detail_csv: Path = DETAIL_CSV
     summary_csv: Path = SUMMARY_CSV
     cache_file: Path = CACHE_FILE
+    database_url: str = DATABASE_URL
+    db_auto_ingest: bool = DB_AUTO_INGEST
+    upload_dir: Path = UPLOAD_DIR
     max_workers: int = DEFAULT_MAX_WORKERS
     batch_size: int = DEFAULT_BATCH_SIZE
 
@@ -51,6 +86,7 @@ class ReportRequest:
     period: str = "current_year"
     days: int | None = None
     persist_csv: bool = False
+    owner_account_id: int | None = None
     interval_config: IntervalConfig = IntervalConfig()
     runtime_config: RuntimeConfig = RuntimeConfig()
 

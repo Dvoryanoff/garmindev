@@ -1,16 +1,15 @@
 .DS_Store
+.git
+.github
+.venv
 __pycache__/
-.venv/
-*.pyc
 **/__pycache__/
-
-# Generated report artifacts
+*.pyc
+monthly_history/
+resources/
 garmin_swim_fit_cache.pkl
 garmin_swim_intervals_details.csv
 garmin_swim_intervals_summary.csv
-monthly_history/
-resources/
-.env
 garmin_dashboard.db
 *.sqlite
 *.sqlite3

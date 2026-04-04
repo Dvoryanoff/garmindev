@@ -28,12 +28,22 @@ def compile_python() -> None:
         force=True,
         quiet=1,
     )
+    serve_dashboard_ok = compileall.compile_file(
+        PROJECT_ROOT / "serve_dashboard.py",
+        force=True,
+        quiet=1,
+    )
+    ingest_dashboard_ok = compileall.compile_file(
+        PROJECT_ROOT / "ingest_dashboard.py",
+        force=True,
+        quiet=1,
+    )
     garmin_local_ok = compileall.compile_file(
         PROJECT_ROOT / "garmin_local.py",
         force=True,
         quiet=1,
     )
-    if not ok or not run_dashboard_ok or not garmin_local_ok:
+    if not ok or not run_dashboard_ok or not serve_dashboard_ok or not ingest_dashboard_ok or not garmin_local_ok:
         raise SystemExit(1)
 
 
