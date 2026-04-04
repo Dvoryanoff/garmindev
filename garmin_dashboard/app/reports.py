@@ -44,10 +44,11 @@ def row_matches_interval_config(row: dict, request: ReportRequest) -> bool:
     return True
 
 
-def is_long_distance_selected(distance: int, request: ReportRequest) -> bool:
+def is_long_distance_selected(row: dict, distance: int, request: ReportRequest) -> bool:
     long_min_distance = int(round(request.interval_config.long_freestyle_min_distance_m))
     return (
-        request.swim_mode == "open_water"
+        row.get("swim_type") == "open_water"
+        and request.swim_mode in {"all", "open_water"}
         and
         distance > request.interval_config.long_freestyle_min_distance_m
         and long_min_distance in request.interval_config.target_distances
@@ -58,7 +59,7 @@ def row_matches_requested_distance_group(row: dict, request: ReportRequest) -> b
     distance = int(row.get("distance_m") or 0)
     if distance in request.interval_config.target_distances:
         return True
-    if is_long_distance_selected(distance, request):
+    if is_long_distance_selected(row, distance, request):
         return True
     return False
 
