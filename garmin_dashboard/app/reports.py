@@ -47,6 +47,8 @@ def row_matches_interval_config(row: dict, request: ReportRequest) -> bool:
 def is_long_distance_selected(distance: int, request: ReportRequest) -> bool:
     long_min_distance = int(round(request.interval_config.long_freestyle_min_distance_m))
     return (
+        request.swim_mode == "open_water"
+        and
         distance > request.interval_config.long_freestyle_min_distance_m
         and long_min_distance in request.interval_config.target_distances
     )
