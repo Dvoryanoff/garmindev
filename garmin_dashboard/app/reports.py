@@ -34,9 +34,32 @@ def row_matches_interval_config(row: dict, request: ReportRequest) -> bool:
     if distance is None:
         return False
     if distance not in request.interval_config.target_distances:
-        return False
+        long_min_distance = int(round(request.interval_config.long_freestyle_min_distance_m))
+        if not (
+            distance > request.interval_config.long_freestyle_min_distance_m
+            and long_min_distance in request.interval_config.target_distances
+        ):
+            return False
     row["distance_m"] = distance
     return True
+
+
+def is_long_distance_selected(distance: int, request: ReportRequest) -> bool:
+    long_min_distance = int(round(request.interval_config.long_freestyle_min_distance_m))
+    return (
+        distance > request.interval_config.long_freestyle_min_distance_m
+        and long_min_distance in request.interval_config.target_distances
+    )
+
+
+def row_matches_requested_distance_group(row: dict, request: ReportRequest) -> bool:
+    distance = int(row.get("distance_m") or 0)
+    if distance in request.interval_config.target_distances:
+        return True
+    if is_long_distance_selected(distance, request):
+        return True
+        return False
+    return False
 
 
 def resolve_period(period: str = "current_year", days: int | None = None, today: date | None = None):
@@ -243,6 +266,7 @@ def build_report(request: ReportRequest) -> dict:
         if row_matches_filters(row, start_date=start_date, end_date=end_date, swim_mode=request.swim_mode)
     ]
     filtered_rows = [row for row in filtered_rows if row_matches_interval_config(row, request)]
+    filtered_rows = [row for row in filtered_rows if row_matches_requested_distance_group(row, request)]
     filtered_rows.sort(key=lambda r: (r["activity_date"], r["lap_start"], r["file_name"]))
 
     summary_rows = build_summary(filtered_rows) if filtered_rows else []
