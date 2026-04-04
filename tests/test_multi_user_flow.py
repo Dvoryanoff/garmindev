@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from garmin_dashboard.app.reports import build_report
 from garmin_dashboard.core.auth import hash_password, new_session_token, session_expiry, verify_password
-from garmin_dashboard.core.config import IntervalConfig, ReportRequest, RuntimeConfig, SUPERADMIN_EMAIL
+from garmin_dashboard.core.config import IntervalConfig, ReportRequest, RuntimeConfig
 from garmin_dashboard.core.db import Database
 from garmin_dashboard.core.db_ingest import ingest_uploaded_files, load_monthly_history
 from garmin_dashboard.core.monthly_history import build_monthly_history_payload
@@ -222,9 +222,10 @@ class MultiUserFlowTestCase(unittest.TestCase):
             db.init_schema()
 
             with db.transaction() as conn:
-                superadmin = db.find_account_by_email(conn, SUPERADMIN_EMAIL)
-                self.assertIsNotNone(superadmin)
-                self.assertEqual(superadmin["role"], "admin")
+                for demo_email in ("demo.alpha@local", "demo.beta@local", "demo.gamma@local", "demo.delta@local"):
+                    demo = db.find_account_by_email(conn, demo_email)
+                    self.assertIsNotNone(demo)
+                    self.assertEqual(demo["role"], "user")
                 admin_id = db.create_account(
                     conn,
                     email="admin@example.com",
@@ -255,6 +256,8 @@ class MultiUserFlowTestCase(unittest.TestCase):
                 user_token = new_session_token()
                 db.create_session(conn, admin_id, admin_token, "2026-04-04 10:10:00", session_expiry())
                 db.create_session(conn, user_id, user_token, "2026-04-04 10:10:00", session_expiry())
+                db.update_last_login(conn, admin_id, "2026-04-04 10:10:00")
+                db.update_last_login(conn, user_id, "2026-04-04 10:11:00")
 
                 self.assertEqual(db.find_account_by_session(conn, admin_token, "2026-04-04 10:10:01")["id"], admin_id)
                 self.assertEqual(db.find_account_by_session(conn, user_token, "2026-04-04 10:10:01")["id"], user_id)
@@ -332,12 +335,21 @@ class MultiUserFlowTestCase(unittest.TestCase):
                 users = db.list_accounts_with_stats(conn)
                 admin_stats = next(row for row in users if int(row["id"]) == admin_id)
                 user_stats = next(row for row in users if int(row["id"]) == user_id)
+                overview = db.admin_overview(conn)
+                recent_logins = db.list_recent_logins(conn)
+                recent_uploads = db.list_recent_uploads(conn)
 
-            self.assertEqual(len(users), 3)
+            self.assertEqual(len(users), 6)
             self.assertEqual(int(admin_stats["files_count"]), 3)
             self.assertEqual(int(user_stats["files_count"]), 3)
             self.assertEqual(int(admin_stats["activities_count"]), 3)
             self.assertEqual(int(user_stats["activities_count"]), 3)
+            self.assertGreaterEqual(overview["total_users"], 6)
+            self.assertEqual(overview["total_files"], 6)
+            self.assertEqual(overview["total_activities"], 6)
+            self.assertEqual(overview["total_intervals"], 6)
+            self.assertGreaterEqual(len(recent_logins), 2)
+            self.assertGreaterEqual(len(recent_uploads), 6)
 
 
 if __name__ == "__main__":

@@ -107,6 +107,9 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/admin/users":
             self.handle_admin_users()
             return
+        if parsed.path == "/api/admin/overview":
+            self.handle_admin_overview()
+            return
         if parsed.path == "/":
             self.path = "/index.html"
         if parsed.path in {"/admin", "/admin/"}:
@@ -392,6 +395,21 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             with self.db.transaction() as conn:
                 users = self.db.list_accounts_with_stats(conn)
             self.send_json({"users": users})
+        except PermissionError as exc:
+            self.send_json({"error": str(exc)}, status=HTTPStatus.UNAUTHORIZED)
+
+    def handle_admin_overview(self):
+        try:
+            self.require_admin()
+            with self.db.transaction() as conn:
+                overview = self.db.admin_overview(conn)
+                recent_logins = self.db.list_recent_logins(conn)
+                recent_uploads = self.db.list_recent_uploads(conn)
+            self.send_json({
+                "overview": overview,
+                "recent_logins": recent_logins,
+                "recent_uploads": recent_uploads,
+            })
         except PermissionError as exc:
             self.send_json({"error": str(exc)}, status=HTTPStatus.UNAUTHORIZED)
 

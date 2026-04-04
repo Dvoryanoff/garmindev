@@ -8,7 +8,11 @@ const adminLogoutButtonEl = document.getElementById("adminLogoutButton");
 const adminAccountNameEl = document.getElementById("adminAccountName");
 const adminAccountEmailEl = document.getElementById("adminAccountEmail");
 const adminOnlyMessageEl = document.getElementById("adminOnlyMessage");
+const adminMetricsEl = document.getElementById("adminMetrics");
+const adminRolesTableEl = document.querySelector("#adminRolesTable tbody");
 const adminUsersTableEl = document.querySelector("#adminUsersTable tbody");
+const adminLoginsTableEl = document.querySelector("#adminLoginsTable tbody");
+const adminUploadsTableEl = document.querySelector("#adminUploadsTable tbody");
 
 let adminLoginInFlight = false;
 
@@ -60,16 +64,18 @@ async function api(path, options = {}) {
   return payload;
 }
 
-function renderAdminUsers(users) {
-  adminUsersTableEl.innerHTML = users.map((user) => `
+function renderAdminRoles(users) {
+  if (!users.length) {
+    adminRolesTableEl.innerHTML = `<tr><td colspan="6">Пользователи не найдены.</td></tr>`;
+    return;
+  }
+  adminRolesTableEl.innerHTML = users.map((user) => `
     <tr>
       <td>${escapeHtml(user.id)}</td>
       <td>${escapeHtml(`${user.first_name} ${user.last_name}`)}<br><span class="muted">${escapeHtml(user.email)}</span></td>
       <td>${escapeHtml(user.role)}</td>
       <td>${Number(user.is_active) ? "active" : "disabled"}</td>
-      <td>${escapeHtml(user.files_count)}</td>
-      <td>${escapeHtml(user.activities_count)}</td>
-      <td>${escapeHtml(user.last_activity_date || "—")}</td>
+      <td>${escapeHtml(user.last_login_at || "—")}</td>
       <td>
         <button class="small-button" data-action="toggle-role" data-id="${escapeHtml(user.id)}" data-role="${escapeHtml(user.role)}">
           ${user.role === "admin" ? "Сделать user" : "Сделать admin"}
@@ -82,9 +88,74 @@ function renderAdminUsers(users) {
   `).join("");
 }
 
+function renderAdminUsers(users) {
+  if (!users.length) {
+    adminUsersTableEl.innerHTML = `<tr><td colspan="7">Пользовательские данные пока недоступны.</td></tr>`;
+    return;
+  }
+  adminUsersTableEl.innerHTML = users.map((user) => `
+    <tr>
+      <td>${escapeHtml(user.id)}</td>
+      <td>${escapeHtml(`${user.first_name} ${user.last_name}`)}<br><span class="muted">${escapeHtml(user.email)}</span></td>
+      <td>${escapeHtml(user.files_count)}</td>
+      <td>${escapeHtml(user.activities_count)}</td>
+      <td>${escapeHtml(user.intervals_count)}</td>
+      <td>${escapeHtml(user.last_activity_date || "—")}</td>
+      <td>${escapeHtml(user.period || "—")}<br><span class="muted">${escapeHtml(user.target_distances || "—")}</span></td>
+    </tr>
+  `).join("");
+}
+
+function renderAdminOverview(payload) {
+  const overview = payload.overview || {};
+  const metrics = [
+    ["Пользователи", overview.total_users || 0, `${overview.active_users || 0} активных`],
+    ["Файлы", overview.total_files || 0, "всего загружено"],
+    ["Тренировки", overview.total_activities || 0, "activities в БД"],
+    ["Интервалы", overview.total_intervals || 0, "intervals в БД"],
+  ];
+  adminMetricsEl.innerHTML = metrics.map(([label, value, note]) => `
+    <article class="metric">
+      <div class="metric-label">${escapeHtml(label)}</div>
+      <div class="metric-value">${escapeHtml(value)}</div>
+      <div class="metric-note">${escapeHtml(note)}</div>
+    </article>
+  `).join("");
+
+  const recentLogins = Array.isArray(payload.recent_logins) ? payload.recent_logins : [];
+  adminLoginsTableEl.innerHTML = recentLogins.length
+    ? recentLogins.map((entry) => `
+      <tr>
+        <td>${escapeHtml(`${entry.first_name} ${entry.last_name}`)}<br><span class="muted">${escapeHtml(entry.email)}</span></td>
+        <td>${escapeHtml(entry.role)}</td>
+        <td>${escapeHtml(entry.last_login_at || "—")}</td>
+      </tr>
+    `).join("")
+    : `<tr><td colspan="3">Пока нет входов.</td></tr>`;
+
+  const recentUploads = Array.isArray(payload.recent_uploads) ? payload.recent_uploads : [];
+  adminUploadsTableEl.innerHTML = recentUploads.length
+    ? recentUploads.map((entry) => `
+      <tr>
+        <td>${escapeHtml(`${entry.first_name} ${entry.last_name}`)}<br><span class="muted">${escapeHtml(entry.email)}</span></td>
+        <td>${escapeHtml(entry.original_file_name || entry.file_name || "—")}</td>
+        <td>${escapeHtml(entry.parse_status || "—")}</td>
+        <td>${escapeHtml(entry.uploaded_at || "—")}</td>
+      </tr>
+    `).join("")
+    : `<tr><td colspan="4">Пока нет загрузок.</td></tr>`;
+}
+
 async function loadAdminUsers() {
   const payload = await api(`/api/admin/users?_ts=${Date.now()}`);
-  renderAdminUsers(payload.users || []);
+  const users = payload.users || [];
+  renderAdminRoles(users);
+  renderAdminUsers(users);
+}
+
+async function loadAdminOverview() {
+  const payload = await api(`/api/admin/overview?_ts=${Date.now()}`);
+  renderAdminOverview(payload);
 }
 
 async function refreshAdminSession() {
@@ -100,7 +171,17 @@ async function refreshAdminSession() {
   }
   setAdminOnlyMessage("", false);
   showAdminApp(session.account);
-  await loadAdminUsers();
+  adminRolesTableEl.innerHTML = `<tr><td colspan="6">Загрузка пользователей...</td></tr>`;
+  adminUsersTableEl.innerHTML = `<tr><td colspan="7">Загрузка пользовательских данных...</td></tr>`;
+  adminMetricsEl.innerHTML = "";
+  adminLoginsTableEl.innerHTML = `<tr><td colspan="3">Загрузка...</td></tr>`;
+  adminUploadsTableEl.innerHTML = `<tr><td colspan="4">Загрузка...</td></tr>`;
+  loadAdminUsers().catch((error) => {
+    setAdminOnlyMessage(`Не удалось загрузить список пользователей: ${error.message}`, true);
+  });
+  loadAdminOverview().catch((error) => {
+    setAdminOnlyMessage(`Не удалось загрузить обзор админки: ${error.message}`, true);
+  });
   return true;
 }
 
@@ -162,12 +243,12 @@ async function handleAdminAction(event) {
       is_active: isActive,
     }),
   });
-  await loadAdminUsers();
+  await Promise.all([loadAdminUsers(), loadAdminOverview()]);
 }
 
 adminLoginButtonEl.addEventListener("click", () => loginAdmin());
 adminLogoutButtonEl.addEventListener("click", () => logoutAdmin().catch((error) => setStatus(error.message, "error")));
-adminUsersTableEl.addEventListener("click", (event) => {
+adminRolesTableEl.addEventListener("click", (event) => {
   handleAdminAction(event).catch((error) => setStatus(error.message, "error"));
 });
 

@@ -37,10 +37,8 @@ DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{PROJECT_ROOT / 'garmin_das
 DB_AUTO_INGEST = os.getenv("GARMIN_DB_AUTO_INGEST", "1").strip().lower() not in {"0", "false", "no", "off"}
 UPLOAD_DIR = _env_path("GARMIN_UPLOAD_DIR", PROJECT_ROOT / "uploads")
 SESSION_TTL_DAYS = _env_int("GARMIN_SESSION_TTL_DAYS", 30)
-SUPERADMIN_EMAIL = os.getenv("GARMIN_SUPERADMIN_EMAIL", "admin-admin@local").strip().lower()
-SUPERADMIN_PASSWORD = os.getenv("GARMIN_SUPERADMIN_PASSWORD", "admin-admin").strip() or "admin-admin"
-SUPERADMIN_FIRST_NAME = os.getenv("GARMIN_SUPERADMIN_FIRST_NAME", "Admin").strip() or "Admin"
-SUPERADMIN_LAST_NAME = os.getenv("GARMIN_SUPERADMIN_LAST_NAME", "Admin").strip() or "Admin"
+BOOTSTRAP_ADMIN_EMAIL = os.getenv("GARMIN_BOOTSTRAP_ADMIN_EMAIL", "dvoryanoff@mail.ru").strip().lower()
+DEMO_USER_PASSWORD = os.getenv("GARMIN_DEMO_USER_PASSWORD", "demo-demo").strip() or "demo-demo"
 
 MONTHLY_FIXED_DISTANCES = (50, 100, 200, 400, 800, 1000, 1200, 1500, 1800)
 

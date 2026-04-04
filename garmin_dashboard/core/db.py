@@ -10,11 +10,9 @@ from urllib.parse import unquote, urlparse
 
 from .auth import hash_password
 from .config import (
+    BOOTSTRAP_ADMIN_EMAIL,
+    DEMO_USER_PASSWORD,
     PROJECT_ROOT,
-    SUPERADMIN_EMAIL,
-    SUPERADMIN_FIRST_NAME,
-    SUPERADMIN_LAST_NAME,
-    SUPERADMIN_PASSWORD,
 )
 
 try:
@@ -325,32 +323,41 @@ class Database:
             ]
             for statement in index_statements:
                 self.execute(conn, statement).close()
-            self.ensure_superadmin(conn)
+            self.ensure_bootstrap_accounts(conn)
 
-    def ensure_superadmin(self, conn) -> None:
-        if not SUPERADMIN_EMAIL:
-            return
-        existing = self.find_account_by_email(conn, SUPERADMIN_EMAIL)
-        if existing:
-            self.execute(
+    def ensure_bootstrap_accounts(self, conn) -> None:
+        if BOOTSTRAP_ADMIN_EMAIL:
+            existing = self.find_account_by_email(conn, BOOTSTRAP_ADMIN_EMAIL)
+            if existing:
+                self.execute(
+                    conn,
+                    """
+                    UPDATE accounts
+                    SET role = 'admin', is_active = 1
+                    WHERE id = ?
+                    """,
+                    (int(existing["id"]),),
+                ).close()
+
+        demo_accounts = [
+            ("demo.alpha@local", "Demo", "Alpha"),
+            ("demo.beta@local", "Demo", "Beta"),
+            ("demo.gamma@local", "Demo", "Gamma"),
+            ("demo.delta@local", "Demo", "Delta"),
+        ]
+        created_at = datetime.now().isoformat(timespec="seconds")
+        for email, first_name, last_name in demo_accounts:
+            if self.find_account_by_email(conn, email):
+                continue
+            self.create_account(
                 conn,
-                """
-                UPDATE accounts
-                SET role = 'admin', is_active = 1
-                WHERE id = ?
-                """,
-                (int(existing["id"]),),
-            ).close()
-            return
-        self.create_account(
-            conn,
-            email=SUPERADMIN_EMAIL,
-            password_hash=hash_password(SUPERADMIN_PASSWORD),
-            first_name=SUPERADMIN_FIRST_NAME,
-            last_name=SUPERADMIN_LAST_NAME,
-            role="admin",
-            created_at=datetime.now().isoformat(timespec="seconds"),
-        )
+                email=email,
+                password_hash=hash_password(DEMO_USER_PASSWORD),
+                first_name=first_name,
+                last_name=last_name,
+                role="user",
+                created_at=created_at,
+            )
 
     def count_accounts(self, conn) -> int:
         row = self.fetchone(conn, "SELECT COUNT(*) AS count FROM accounts")
@@ -447,17 +454,96 @@ class Database:
                 accounts.is_active,
                 accounts.created_at,
                 accounts.last_login_at,
-                COUNT(DISTINCT source_files.id) AS files_count,
-                COUNT(DISTINCT activities.id) AS activities_count,
-                COUNT(DISTINCT intervals.id) AS intervals_count,
-                MAX(activities.activity_date) AS last_activity_date
+                COALESCE(files.files_count, 0) AS files_count,
+                COALESCE(activities.activities_count, 0) AS activities_count,
+                COALESCE(intervals.intervals_count, 0) AS intervals_count,
+                COALESCE(activities.last_activity_date, '') AS last_activity_date,
+                user_preferences.period AS period,
+                user_preferences.target_distances AS target_distances
             FROM accounts
-            LEFT JOIN source_files ON source_files.owner_account_id = accounts.id
-            LEFT JOIN activities ON activities.owner_account_id = accounts.id
-            LEFT JOIN intervals ON intervals.owner_account_id = accounts.id
-            GROUP BY accounts.id
+            LEFT JOIN (
+                SELECT owner_account_id, COUNT(*) AS files_count
+                FROM source_files
+                GROUP BY owner_account_id
+            ) AS files ON files.owner_account_id = accounts.id
+            LEFT JOIN (
+                SELECT owner_account_id, COUNT(*) AS activities_count, MAX(activity_date) AS last_activity_date
+                FROM activities
+                GROUP BY owner_account_id
+            ) AS activities ON activities.owner_account_id = accounts.id
+            LEFT JOIN (
+                SELECT owner_account_id, COUNT(*) AS intervals_count
+                FROM intervals
+                GROUP BY owner_account_id
+            ) AS intervals ON intervals.owner_account_id = accounts.id
+            LEFT JOIN user_preferences ON user_preferences.account_id = accounts.id
             ORDER BY accounts.created_at DESC, accounts.id DESC
             """
+        )
+
+    def admin_overview(self, conn) -> dict:
+        users_row = self.fetchone(
+            conn,
+            """
+            SELECT
+                COUNT(*) AS total_users,
+                SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) AS active_users
+            FROM accounts
+            """,
+        ) or {}
+        files_row = self.fetchone(conn, "SELECT COUNT(*) AS total_files FROM source_files") or {}
+        activities_row = self.fetchone(conn, "SELECT COUNT(*) AS total_activities FROM activities") or {}
+        intervals_row = self.fetchone(conn, "SELECT COUNT(*) AS total_intervals FROM intervals") or {}
+        return {
+            "total_users": int(users_row.get("total_users") or 0),
+            "active_users": int(users_row.get("active_users") or 0),
+            "total_files": int(files_row.get("total_files") or 0),
+            "total_activities": int(activities_row.get("total_activities") or 0),
+            "total_intervals": int(intervals_row.get("total_intervals") or 0),
+        }
+
+    def list_recent_logins(self, conn, limit: int = 10) -> list[dict]:
+        return self.fetchall(
+            conn,
+            """
+            SELECT
+                id,
+                email,
+                first_name,
+                last_name,
+                role,
+                last_login_at
+            FROM accounts
+            WHERE COALESCE(last_login_at, '') <> ''
+            ORDER BY last_login_at DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+
+    def list_recent_uploads(self, conn, limit: int = 20) -> list[dict]:
+        return self.fetchall(
+            conn,
+            """
+            SELECT
+                source_files.id,
+                source_files.original_file_name,
+                source_files.file_name,
+                source_files.parse_status,
+                source_files.uploaded_at,
+                source_files.ingested_at,
+                source_files.file_size,
+                accounts.id AS account_id,
+                accounts.email,
+                accounts.first_name,
+                accounts.last_name
+            FROM source_files
+            INNER JOIN accounts ON accounts.id = source_files.owner_account_id
+            WHERE COALESCE(source_files.uploaded_at, '') <> ''
+            ORDER BY source_files.uploaded_at DESC, source_files.id DESC
+            LIMIT ?
+            """,
+            (limit,),
         )
 
     def update_account(self, conn, account_id: int, *, role: str, is_active: int) -> None:

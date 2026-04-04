@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Garmin Admin</title>
-  <link rel="stylesheet" href="/style.css?v=20260404g">
+  <link rel="stylesheet" href="/style.css?v=20260404i">
 </head>
 <body>
   <main class="page">
@@ -50,21 +50,21 @@
 
       <section id="adminOnlyMessage" class="runtime-banner is-hidden"></section>
 
+      <section class="metrics" id="adminMetrics"></section>
+
       <section class="panel">
         <div class="panel-header">
-          <h2>Пользователи</h2>
+          <h2>Роли и доступ</h2>
         </div>
         <div class="table-wrap">
-          <table id="adminUsersTable">
+          <table id="adminRolesTable">
             <thead>
               <tr>
                 <th>ID</th>
                 <th>Пользователь</th>
                 <th>Роль</th>
                 <th>Статус</th>
-                <th>Файлы</th>
-                <th>Тренировки</th>
-                <th>Последняя активность</th>
+                <th>Последний вход</th>
                 <th>Действия</th>
               </tr>
             </thead>
@@ -72,8 +72,69 @@
           </table>
         </div>
       </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Пользователи и данные</h2>
+        </div>
+        <div class="table-wrap">
+          <table id="adminUsersTable">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Пользователь</th>
+                <th>Файлы</th>
+                <th>Тренировки</th>
+                <th>Интервалы</th>
+                <th>Последняя активность</th>
+                <th>Фильтры</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="grid">
+        <article class="panel">
+          <div class="panel-header">
+            <h2>Последние входы</h2>
+          </div>
+          <div class="table-wrap short">
+            <table id="adminLoginsTable">
+              <thead>
+                <tr>
+                  <th>Пользователь</th>
+                  <th>Роль</th>
+                  <th>Последний вход</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-header">
+            <h2>Последние загрузки</h2>
+          </div>
+          <div class="table-wrap short">
+            <table id="adminUploadsTable">
+              <thead>
+                <tr>
+                  <th>Пользователь</th>
+                  <th>Файл</th>
+                  <th>Статус</th>
+                  <th>Загружен</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
     </section>
   </main>
-  <script src="/admin.js?v=20260404g"></script>
+  <script src="/admin.js?v=20260404i"></script>
 </body>
 </html>
