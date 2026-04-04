@@ -58,7 +58,6 @@ def row_matches_requested_distance_group(row: dict, request: ReportRequest) -> b
         return True
     if is_long_distance_selected(distance, request):
         return True
-        return False
     return False
 
 

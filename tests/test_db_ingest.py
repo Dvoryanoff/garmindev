@@ -175,6 +175,84 @@ class DatabaseIngestTestCase(unittest.TestCase):
             self.assertEqual(report["overview"]["intervals"], 0)
             self.assertEqual(report["summary"], [])
 
+    def test_build_report_includes_open_water_distances_above_threshold_when_1000_selected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_path = root / "garmin_dashboard.sqlite"
+            upload_dir = root / "uploads"
+            runtime = RuntimeConfig(
+                database_url=f"sqlite:///{db_path}",
+                upload_dir=upload_dir,
+                db_auto_ingest=False,
+            )
+            db = Database(runtime.database_url)
+            db.init_schema()
+            with db.transaction() as conn:
+                account_id = db.create_account(
+                    conn,
+                    email="openwater@example.com",
+                    password_hash=hash_password("password123"),
+                    first_name="Open",
+                    last_name="Water",
+                    role="user",
+                    created_at="2026-04-04 10:00:00",
+                )
+
+            parsed = {
+                "status": "ready",
+                "error_text": "",
+                "activity_key": "user-3|2026-04-04T10:00:00",
+                "payload": {"messages": {"session_mesgs": [{"sport": "swimming"}]}},
+                "activity": {
+                    "activity_key": "user-3|2026-04-04T10:00:00",
+                    "activity_date": "2026-04-04 10:00:00",
+                    "garmin_user_id": "user-3",
+                    "garmin_user_name": "Open",
+                    "sport": "swimming",
+                    "sub_sport": "open_water",
+                    "swim_type": "open_water",
+                    "total_distance_m": 1207.0,
+                    "total_time_s": 2100.0,
+                },
+                "intervals": [
+                    {
+                        "file_name": "open.fit",
+                        "activity_key": "user-3|2026-04-04T10:00:00",
+                        "activity_date": "2026-04-04 10:00:00",
+                        "user_id": "user-3",
+                        "user_name": "Open",
+                        "lap_start": "2026-04-04 10:00:00",
+                        "lap_end": "2026-04-04 10:35:00",
+                        "distance_m": 1207,
+                        "raw_distance_m": 1207.0,
+                        "time_s": 2100.0,
+                        "time_text": "35:00",
+                        "workout_total_distance_m": 1207.0,
+                        "workout_total_time_s": 2100.0,
+                        "stroke": "freestyle",
+                        "swim_type": "open_water",
+                        "pace_100m_s": 174.0,
+                        "pace_100m": "2:54/100m",
+                    }
+                ],
+            }
+
+            with patch("garmin_dashboard.core.db_ingest.parse_fit_file_to_activity", return_value=parsed):
+                ingest_uploaded_files(runtime, account_id, [{"name": "open.fit", "content": b"fit"}])
+
+            request = ReportRequest(
+                swim_mode="open_water",
+                period="all",
+                owner_account_id=account_id,
+                interval_config=IntervalConfig(target_distances=(1000,), long_freestyle_min_distance_m=1000.0),
+                runtime_config=runtime,
+            )
+            report = build_report(request)
+
+            self.assertEqual(report["overview"]["intervals"], 1)
+            self.assertEqual(len(report["workouts"]), 1)
+            self.assertEqual(report["summary"][0]["distance_m"], 1207)
+
 
 if __name__ == "__main__":
     unittest.main()
