@@ -1,0 +1,4 @@
+TO: dvoryanoff@mail.ru
+SUBJECT: Тест SMTP Garmin Dashboard
+
+Это тестовое письмо из Garmin Dashboard. Если ты его получил, SMTP-настройки работают.

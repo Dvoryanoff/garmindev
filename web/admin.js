@@ -13,6 +13,7 @@ const adminRolesTableEl = document.querySelector("#adminRolesTable tbody");
 const adminUsersTableEl = document.querySelector("#adminUsersTable tbody");
 const adminLoginsTableEl = document.querySelector("#adminLoginsTable tbody");
 const adminUploadsTableEl = document.querySelector("#adminUploadsTable tbody");
+const adminAuditTableEl = document.querySelector("#adminAuditTable tbody");
 
 let adminLoginInFlight = false;
 
@@ -144,6 +145,18 @@ function renderAdminOverview(payload) {
       </tr>
     `).join("")
     : `<tr><td colspan="4">Пока нет загрузок.</td></tr>`;
+
+  const recentAudit = Array.isArray(payload.recent_audit) ? payload.recent_audit : [];
+  adminAuditTableEl.innerHTML = recentAudit.length
+    ? recentAudit.map((entry) => `
+      <tr>
+        <td>${escapeHtml(entry.created_at || "—")}</td>
+        <td>${escapeHtml(entry.event_type || "—")}</td>
+        <td>${escapeHtml(entry.actor_email || "system")}</td>
+        <td>${escapeHtml(entry.target_email || "—")}</td>
+      </tr>
+    `).join("")
+    : `<tr><td colspan="4">Журнал пока пуст.</td></tr>`;
 }
 
 async function loadAdminUsers() {
@@ -176,6 +189,7 @@ async function refreshAdminSession() {
   adminMetricsEl.innerHTML = "";
   adminLoginsTableEl.innerHTML = `<tr><td colspan="3">Загрузка...</td></tr>`;
   adminUploadsTableEl.innerHTML = `<tr><td colspan="4">Загрузка...</td></tr>`;
+  adminAuditTableEl.innerHTML = `<tr><td colspan="4">Загрузка...</td></tr>`;
   loadAdminUsers().catch((error) => {
     setAdminOnlyMessage(`Не удалось загрузить список пользователей: ${error.message}`, true);
   });

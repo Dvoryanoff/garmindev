@@ -39,6 +39,20 @@ UPLOAD_DIR = _env_path("GARMIN_UPLOAD_DIR", PROJECT_ROOT / "uploads")
 SESSION_TTL_DAYS = _env_int("GARMIN_SESSION_TTL_DAYS", 30)
 BOOTSTRAP_ADMIN_EMAIL = os.getenv("GARMIN_BOOTSTRAP_ADMIN_EMAIL", "dvoryanoff@mail.ru").strip().lower()
 DEMO_USER_PASSWORD = os.getenv("GARMIN_DEMO_USER_PASSWORD", "demo-demo").strip() or "demo-demo"
+UPLOAD_MAX_FILES = _env_int("GARMIN_UPLOAD_MAX_FILES", 500)
+UPLOAD_MAX_BATCH_BYTES = _env_int("GARMIN_UPLOAD_MAX_BATCH_BYTES", 32 * 1024 * 1024)
+UPLOAD_MAX_FILE_BYTES = _env_int("GARMIN_UPLOAD_MAX_FILE_BYTES", 10 * 1024 * 1024)
+MIN_FREE_DISK_MB = _env_int("GARMIN_MIN_FREE_DISK_MB", 512)
+AUTH_CODE_TTL_MINUTES = _env_int("GARMIN_AUTH_CODE_TTL_MINUTES", 15)
+LOGIN_RATE_LIMIT_WINDOW_MINUTES = _env_int("GARMIN_LOGIN_RATE_LIMIT_WINDOW_MINUTES", 15)
+LOGIN_RATE_LIMIT_ATTEMPTS = _env_int("GARMIN_LOGIN_RATE_LIMIT_ATTEMPTS", 8)
+SMTP_HOST = os.getenv("SMTP_HOST", "").strip()
+SMTP_PORT = _env_int("SMTP_PORT", 465)
+SMTP_USERNAME = os.getenv("SMTP_USERNAME", "").strip()
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "").strip()
+SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", "").strip()
+SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "1").strip().lower() not in {"0", "false", "no", "off"}
+SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "0").strip().lower() not in {"0", "false", "no", "off"}
 
 MONTHLY_FIXED_DISTANCES = (50, 100, 200, 400, 800, 1000, 1200, 1500, 1800)
 

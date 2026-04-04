@@ -289,6 +289,69 @@ class Database:
                 )
                 """,
             ).close()
+            self.execute(
+                conn,
+                f"""
+                CREATE TABLE IF NOT EXISTS background_jobs (
+                    id {id_pk},
+                    owner_account_id {bigint} REFERENCES accounts(id) ON DELETE CASCADE,
+                    job_type TEXT NOT NULL DEFAULT 'ingest',
+                    status TEXT NOT NULL DEFAULT 'queued',
+                    stage TEXT NOT NULL DEFAULT 'queued',
+                    total_files INTEGER NOT NULL DEFAULT 0,
+                    processed_files INTEGER NOT NULL DEFAULT 0,
+                    skipped_files INTEGER NOT NULL DEFAULT 0,
+                    duplicate_files INTEGER NOT NULL DEFAULT 0,
+                    error_files INTEGER NOT NULL DEFAULT 0,
+                    parsed_rows INTEGER NOT NULL DEFAULT 0,
+                    progress_percent INTEGER NOT NULL DEFAULT 0,
+                    error_text TEXT NOT NULL DEFAULT '',
+                    payload_json {json_type},
+                    created_at TEXT NOT NULL DEFAULT '',
+                    started_at TEXT NOT NULL DEFAULT '',
+                    finished_at TEXT NOT NULL DEFAULT ''
+                )
+                """,
+            ).close()
+            self.execute(
+                conn,
+                f"""
+                CREATE TABLE IF NOT EXISTS auth_codes (
+                    id {id_pk},
+                    email TEXT NOT NULL,
+                    purpose TEXT NOT NULL,
+                    code TEXT NOT NULL,
+                    payload_json {json_type},
+                    created_at TEXT NOT NULL DEFAULT '',
+                    expires_at TEXT NOT NULL DEFAULT '',
+                    consumed_at TEXT NOT NULL DEFAULT ''
+                )
+                """,
+            ).close()
+            self.execute(
+                conn,
+                f"""
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id {id_pk},
+                    actor_account_id {bigint},
+                    target_account_id {bigint},
+                    event_type TEXT NOT NULL,
+                    payload_json {json_type},
+                    created_at TEXT NOT NULL DEFAULT ''
+                )
+                """,
+            ).close()
+            self.execute(
+                conn,
+                f"""
+                CREATE TABLE IF NOT EXISTS login_attempts (
+                    id {id_pk},
+                    email TEXT NOT NULL DEFAULT '',
+                    attempted_at TEXT NOT NULL DEFAULT '',
+                    was_success INTEGER NOT NULL DEFAULT 0
+                )
+                """,
+            ).close()
 
             legacy_columns = {
                 "source_files": {
@@ -315,6 +378,11 @@ class Database:
             index_statements = [
                 "CREATE INDEX IF NOT EXISTS idx_accounts_email ON accounts(email)",
                 "CREATE INDEX IF NOT EXISTS idx_sessions_token ON user_sessions(session_token)",
+                "CREATE INDEX IF NOT EXISTS idx_jobs_owner_created ON background_jobs(owner_account_id, created_at)",
+                "CREATE INDEX IF NOT EXISTS idx_jobs_status_created ON background_jobs(status, created_at)",
+                "CREATE INDEX IF NOT EXISTS idx_auth_codes_email_purpose ON auth_codes(email, purpose, created_at)",
+                "CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at)",
+                "CREATE INDEX IF NOT EXISTS idx_login_attempts_email_time ON login_attempts(email, attempted_at)",
                 "CREATE INDEX IF NOT EXISTS idx_source_files_owner_hash ON source_files(owner_account_id, file_hash)",
                 "CREATE INDEX IF NOT EXISTS idx_source_files_owner_status ON source_files(owner_account_id, parse_status)",
                 "CREATE INDEX IF NOT EXISTS idx_activities_owner_date ON activities(owner_account_id, activity_date)",
@@ -390,7 +458,7 @@ class Database:
         return self.fetchone(
             conn,
             """
-            SELECT id, email, first_name, last_name, role, is_active, created_at, last_login_at
+            SELECT id, email, password_hash, first_name, last_name, role, is_active, created_at, last_login_at
             FROM accounts
             WHERE id = ?
             """,
@@ -458,8 +526,8 @@ class Database:
                 COALESCE(activities.activities_count, 0) AS activities_count,
                 COALESCE(intervals.intervals_count, 0) AS intervals_count,
                 COALESCE(activities.last_activity_date, '') AS last_activity_date,
-                user_preferences.period AS period,
-                user_preferences.target_distances AS target_distances
+                COALESCE(user_preferences.period, '') AS period,
+                COALESCE(user_preferences.target_distances, '') AS target_distances
             FROM accounts
             LEFT JOIN (
                 SELECT owner_account_id, COUNT(*) AS files_count
@@ -476,7 +544,10 @@ class Database:
                 FROM intervals
                 GROUP BY owner_account_id
             ) AS intervals ON intervals.owner_account_id = accounts.id
-            LEFT JOIN user_preferences ON user_preferences.account_id = accounts.id
+            LEFT JOIN (
+                SELECT account_id, period, target_distances
+                FROM user_preferences
+            ) AS user_preferences ON user_preferences.account_id = accounts.id
             ORDER BY accounts.created_at DESC, accounts.id DESC
             """
         )
@@ -553,6 +624,13 @@ class Database:
             (role, is_active, account_id),
         ).close()
 
+    def update_account_password(self, conn, account_id: int, password_hash: str) -> None:
+        self.execute(
+            conn,
+            "UPDATE accounts SET password_hash = ? WHERE id = ?",
+            (password_hash, account_id),
+        ).close()
+
     def get_user_preferences(self, conn, account_id: int) -> dict | None:
         return self.fetchone(
             conn,
@@ -610,6 +688,192 @@ class Database:
             LIMIT 1
             """,
             (owner_account_id, file_hash),
+        )
+
+    def create_background_job(self, conn, *, owner_account_id: int, job_type: str, total_files: int, payload_json: str, created_at: str) -> int:
+        self.execute(
+            conn,
+            """
+            INSERT INTO background_jobs (
+                owner_account_id,
+                job_type,
+                status,
+                stage,
+                total_files,
+                payload_json,
+                created_at
+            ) VALUES (?, ?, 'queued', 'queued', ?, ?, ?)
+            """,
+            (owner_account_id, job_type, total_files, payload_json, created_at),
+        ).close()
+        row = self.fetchone(conn, "SELECT id FROM background_jobs ORDER BY id DESC LIMIT 1")
+        return int(row["id"])
+
+    def update_background_job(
+        self,
+        conn,
+        job_id: int,
+        *,
+        status: str | None = None,
+        stage: str | None = None,
+        processed_files: int | None = None,
+        skipped_files: int | None = None,
+        duplicate_files: int | None = None,
+        error_files: int | None = None,
+        parsed_rows: int | None = None,
+        progress_percent: int | None = None,
+        error_text: str | None = None,
+        started_at: str | None = None,
+        finished_at: str | None = None,
+        payload_json: str | None = None,
+    ) -> None:
+        updates = []
+        params: list = []
+        mapping = {
+            "status": status,
+            "stage": stage,
+            "processed_files": processed_files,
+            "skipped_files": skipped_files,
+            "duplicate_files": duplicate_files,
+            "error_files": error_files,
+            "parsed_rows": parsed_rows,
+            "progress_percent": progress_percent,
+            "error_text": error_text,
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "payload_json": payload_json,
+        }
+        for key, value in mapping.items():
+            if value is not None:
+                updates.append(f"{key} = ?")
+                params.append(value)
+        if not updates:
+            return
+        params.append(job_id)
+        self.execute(conn, f"UPDATE background_jobs SET {', '.join(updates)} WHERE id = ?", tuple(params)).close()
+
+    def get_background_job(self, conn, job_id: int) -> dict | None:
+        return self.fetchone(
+            conn,
+            """
+            SELECT id, owner_account_id, job_type, status, stage, total_files, processed_files, skipped_files,
+                   duplicate_files, error_files, parsed_rows, progress_percent, error_text, payload_json,
+                   created_at, started_at, finished_at
+            FROM background_jobs
+            WHERE id = ?
+            """,
+            (job_id,),
+        )
+
+    def list_background_jobs(self, conn, owner_account_id: int, limit: int = 20) -> list[dict]:
+        return self.fetchall(
+            conn,
+            """
+            SELECT id, owner_account_id, job_type, status, stage, total_files, processed_files, skipped_files,
+                   duplicate_files, error_files, parsed_rows, progress_percent, error_text, payload_json,
+                   created_at, started_at, finished_at
+            FROM background_jobs
+            WHERE owner_account_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (owner_account_id, limit),
+        )
+
+    def create_auth_code(self, conn, *, email: str, purpose: str, code: str, payload_json: str, created_at: str, expires_at: str) -> int:
+        self.execute(
+            conn,
+            """
+            INSERT INTO auth_codes (email, purpose, code, payload_json, created_at, expires_at, consumed_at)
+            VALUES (?, ?, ?, ?, ?, ?, '')
+            """,
+            (email, purpose, code, payload_json, created_at, expires_at),
+        ).close()
+        row = self.fetchone(conn, "SELECT id FROM auth_codes ORDER BY id DESC LIMIT 1")
+        return int(row["id"])
+
+    def consume_auth_code(self, conn, *, email: str, purpose: str, code: str, now_text: str) -> dict | None:
+        record = self.fetchone(
+            conn,
+            """
+            SELECT id, email, purpose, code, payload_json, created_at, expires_at, consumed_at
+            FROM auth_codes
+            WHERE lower(email) = lower(?) AND purpose = ? AND code = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """,
+            (email, purpose, code),
+        )
+        if not record:
+            return None
+        if str(record.get("consumed_at") or "").strip():
+            return None
+        if str(record.get("expires_at") or "") < now_text:
+            return None
+        self.execute(conn, "UPDATE auth_codes SET consumed_at = ? WHERE id = ?", (now_text, int(record["id"]))).close()
+        return record
+
+    def record_login_attempt(self, conn, *, email: str, attempted_at: str, was_success: bool) -> None:
+        self.execute(
+            conn,
+            """
+            INSERT INTO login_attempts (email, attempted_at, was_success)
+            VALUES (?, ?, ?)
+            """,
+            (email, attempted_at, 1 if was_success else 0),
+        ).close()
+
+    def count_recent_failed_logins(self, conn, *, email: str, attempted_after: str) -> int:
+        row = self.fetchone(
+            conn,
+            """
+            SELECT COUNT(*) AS count
+            FROM login_attempts
+            WHERE lower(email) = lower(?) AND attempted_at >= ? AND was_success = 0
+            """,
+            (email, attempted_after),
+        ) or {}
+        return int(row.get("count") or 0)
+
+    def append_audit_log(
+        self,
+        conn,
+        *,
+        actor_account_id: int | None,
+        target_account_id: int | None,
+        event_type: str,
+        payload_json: str,
+        created_at: str,
+    ) -> None:
+        self.execute(
+            conn,
+            """
+            INSERT INTO audit_log (actor_account_id, target_account_id, event_type, payload_json, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (actor_account_id, target_account_id, event_type, payload_json, created_at),
+        ).close()
+
+    def list_audit_log(self, conn, limit: int = 50) -> list[dict]:
+        return self.fetchall(
+            conn,
+            """
+            SELECT
+                audit_log.id,
+                audit_log.actor_account_id,
+                audit_log.target_account_id,
+                audit_log.event_type,
+                audit_log.payload_json,
+                audit_log.created_at,
+                actor.email AS actor_email,
+                target.email AS target_email
+            FROM audit_log
+            LEFT JOIN accounts AS actor ON actor.id = audit_log.actor_account_id
+            LEFT JOIN accounts AS target ON target.id = audit_log.target_account_id
+            ORDER BY audit_log.created_at DESC, audit_log.id DESC
+            LIMIT ?
+            """,
+            (limit,),
         )
 
     def db_activity_key(self, owner_account_id: int | None, activity_key: str) -> str:

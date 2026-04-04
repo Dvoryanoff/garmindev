@@ -87,6 +87,12 @@ body {
   background: rgba(51, 122, 85, 0.1);
 }
 
+.auth-inline-note {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
 .hero {
   display: grid;
   grid-template-columns: 1.5fr 1fr;

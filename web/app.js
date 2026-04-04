@@ -68,6 +68,7 @@ let runtimeStatusTimer = null;
 let sessionState = null;
 let monthlyHistoryState = { headers: [], years: [], rows: [] };
 let authRequestState = { login: false, register: false };
+let activeUploadJobId = null;
 const MAX_FILES_PER_BATCH = 50;
 const MAX_BATCH_BYTES = 16 * 1024 * 1024;
 
@@ -472,7 +473,7 @@ async function register() {
   registerButtonEl.disabled = true;
   const email = registerEmailEl.value.trim();
   const password = registerPasswordEl.value;
-  setFormStatus(registerStatusEl, "Создаём учётную запись...");
+  setFormStatus(registerStatusEl, "Создаём аккаунт...");
   try {
     await api("/api/auth/register", {
       method: "POST",
@@ -498,6 +499,8 @@ async function register() {
       registerLastNameEl.value = "";
       registerEmailEl.value = "";
       registerPasswordEl.value = "";
+      loginEmailEl.value = email;
+      loginPasswordEl.value = password;
       setFormStatus(registerStatusEl);
       await refreshSession();
     } catch (loginError) {
@@ -514,6 +517,34 @@ async function register() {
     authRequestState.register = false;
     registerButtonEl.disabled = false;
   }
+}
+
+async function pollUploadJob(jobId) {
+  activeUploadJobId = jobId;
+  let reportRefreshedWhileRunning = false;
+  let lastRenderedProgress = -1;
+  while (activeUploadJobId === jobId) {
+    const payload = await api(`/api/jobs/${jobId}?_ts=${Date.now()}`);
+    const job = payload.job || {};
+    setUploadHint(`Job #${job.id}: ${job.stage || job.status}. ${job.progress_percent || 0}%`);
+    if (!dashboardContentEl.hidden && job.error_text) {
+      setRuntimeBanner(job.error_text, true);
+    }
+    if (Number(job.processed_files || 0) > 0 && (job.progress_percent || 0) >= 20 && (job.progress_percent || 0) !== lastRenderedProgress) {
+      lastRenderedProgress = job.progress_percent || 0;
+      showDashboard(true);
+      if (!reportRefreshedWhileRunning || lastRenderedProgress >= 60) {
+        reportRefreshedWhileRunning = true;
+        await Promise.allSettled([loadReport(), loadMonthlyHistory()]);
+      }
+    }
+    if (job.status === "done" || job.status === "partial" || job.status === "failed") {
+      activeUploadJobId = null;
+      return job;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 1200));
+  }
+  return null;
 }
 
 async function logout() {
@@ -537,17 +568,26 @@ async function uploadFiles() {
     let duplicates = 0;
     let errors = 0;
     for (let index = 0; index < batches.length; index += 1) {
-      setUploadHint(`Загрузка пакета ${index + 1} из ${batches.length} (${batches[index].length} файлов)...`);
+      setUploadHint(`Создаём job для пакета ${index + 1} из ${batches.length}...`);
       const formData = new FormData();
       batches[index].forEach((file) => formData.append("files", file, file.webkitRelativePath || file.name));
       const payload = await api("/api/upload", {
         method: "POST",
         body: formData,
       });
-      processed += Number(payload.meta.processed_files || 0);
-      skipped += Number(payload.meta.skipped_files || 0);
-      duplicates += Number(payload.meta.duplicate_files || 0);
-      errors += Number(payload.meta.error_files || 0);
+      const job = await pollUploadJob(payload.job_id);
+      if (!job) {
+        throw new Error("Не удалось дождаться завершения job.");
+      }
+      if (job.status === "failed") {
+        throw new Error(job.error_text || `Job #${job.id} завершился с ошибкой.`);
+      }
+      processed += Number(job?.processed_files || 0);
+      skipped += Number(job?.skipped_files || 0);
+      duplicates += Number(job?.duplicate_files || 0);
+      errors += Number(job?.error_files || 0);
+      showDashboard(true);
+      await loadReport();
     }
     alert(`Импорт завершён. Обработано: ${processed}, пропущено: ${skipped}, дубликаты: ${duplicates}, ошибки: ${errors}`);
     clearUploadInputs();

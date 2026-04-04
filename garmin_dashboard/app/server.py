@@ -4,7 +4,7 @@ import cgi
 import json
 import threading
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import partial
 from http import HTTPStatus
 from http.cookies import SimpleCookie
@@ -15,22 +15,24 @@ from garmin_dashboard.core.config import (
     DEFAULT_BATCH_SIZE,
     DEFAULT_MAX_WORKERS,
     IntervalConfig,
+    LOGIN_RATE_LIMIT_ATTEMPTS,
+    LOGIN_RATE_LIMIT_WINDOW_MINUTES,
     PROJECT_ROOT,
     ReportRequest,
     RuntimeConfig,
     SESSION_TTL_DAYS,
+    UPLOAD_MAX_BATCH_BYTES,
+    UPLOAD_MAX_FILE_BYTES,
+    UPLOAD_MAX_FILES,
     parse_distances,
 )
 from garmin_dashboard.core.db import Database
-from garmin_dashboard.core.db_ingest import ingest_uploaded_files, load_monthly_history
+from garmin_dashboard.core.db_ingest import load_monthly_history
+from garmin_dashboard.core.jobs import enqueue_job, ensure_workers
 from garmin_dashboard.core.monthly_history import build_monthly_history_payload, build_monthly_history_workbook_bytes
 from .reports import build_report
 
-
 WEB_ROOT = PROJECT_ROOT / "web"
-RUNTIME_STATUS = {
-    "imports": {},
-}
 
 
 def iso_now() -> str:
@@ -67,9 +69,17 @@ def build_request_from_params(params: dict, owner_account_id: int) -> ReportRequ
 
 
 class DashboardRequestHandler(SimpleHTTPRequestHandler):
+    _schema_lock = threading.Lock()
+    _initialized_databases: set[str] = set()
+
     def __init__(self, *args, directory=None, **kwargs):
         self.db = Database(RuntimeConfig().database_url)
-        self.db.init_schema()
+        database_key = self.db.url
+        if database_key not in self._initialized_databases:
+            with self._schema_lock:
+                if database_key not in self._initialized_databases:
+                    self.db.init_schema()
+                    self._initialized_databases.add(database_key)
         super().__init__(*args, directory=str(directory or WEB_ROOT), **kwargs)
 
     def end_headers(self):
@@ -88,6 +98,12 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/auth/session":
             self.handle_session()
+            return
+        if parsed.path == "/api/jobs":
+            self.handle_jobs()
+            return
+        if parsed.path.startswith("/api/jobs/"):
+            self.handle_job(parsed.path.rsplit("/", 1)[-1])
             return
         if parsed.path == "/api/report":
             self.handle_report(parsed.query)
@@ -213,14 +229,13 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             if self.db.find_account_by_email(conn, email):
                 self.send_json({"error": "Такой e-mail уже зарегистрирован"}, status=HTTPStatus.BAD_REQUEST)
                 return
-            role = "user"
             account_id = self.db.create_account(
                 conn,
                 email=email,
                 password_hash=hash_password(password),
                 first_name=first_name,
                 last_name=last_name,
-                role=role,
+                role="user",
                 created_at=iso_now(),
             )
             self.db.save_user_preferences(
@@ -233,24 +248,48 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                 long_min_distance=1000.0,
                 updated_at=iso_now(),
             )
-        self.send_json({"ok": True})
+            self.db.append_audit_log(
+                conn,
+                actor_account_id=account_id,
+                target_account_id=account_id,
+                event_type="account_registered",
+                payload_json=json.dumps({"email": email}, ensure_ascii=False),
+                created_at=iso_now(),
+            )
+        self.send_json({"ok": True, "message": "Учётная запись создана"})
 
     def handle_login(self):
         payload = self.parse_json_body()
         email = str(payload.get("email", "")).strip().lower()
         password = str(payload.get("password", ""))
+        window_start = (datetime.now() - timedelta(minutes=LOGIN_RATE_LIMIT_WINDOW_MINUTES)).isoformat(timespec="seconds")
         with self.db.transaction() as conn:
+            failed_attempts = self.db.count_recent_failed_logins(conn, email=email, attempted_after=window_start)
+            if failed_attempts >= LOGIN_RATE_LIMIT_ATTEMPTS:
+                self.send_json({"error": "Слишком много неудачных попыток входа. Попробуй позже."}, status=HTTPStatus.TOO_MANY_REQUESTS)
+                return
             account = self.db.find_account_by_email(conn, email)
             if not account or not verify_password(password, account.get("password_hash", "")):
+                self.db.record_login_attempt(conn, email=email, attempted_at=iso_now(), was_success=False)
                 self.send_json({"error": "Неверный e-mail или пароль"}, status=HTTPStatus.UNAUTHORIZED)
                 return
             if not int(account.get("is_active") or 0):
+                self.db.record_login_attempt(conn, email=email, attempted_at=iso_now(), was_success=False)
                 self.send_json({"error": "Учётная запись отключена"}, status=HTTPStatus.FORBIDDEN)
                 return
             token = new_session_token()
             now_text = iso_now()
             self.db.create_session(conn, int(account["id"]), token, now_text, session_expiry())
             self.db.update_last_login(conn, int(account["id"]), now_text)
+            self.db.record_login_attempt(conn, email=email, attempted_at=now_text, was_success=True)
+            self.db.append_audit_log(
+                conn,
+                actor_account_id=int(account["id"]),
+                target_account_id=int(account["id"]),
+                event_type="login_success",
+                payload_json=json.dumps({"email": email}, ensure_ascii=False),
+                created_at=now_text,
+            )
         self.send_json(
             {"ok": True},
             headers={"Set-Cookie": f"garmin_session={token}; Path=/; Max-Age={SESSION_TTL_DAYS * 24 * 60 * 60}; HttpOnly; SameSite=Lax"},
@@ -335,25 +374,82 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             if not isinstance(file_fields, list):
                 file_fields = [file_fields]
             files = []
+            total_bytes = 0
             for item in file_fields:
                 if getattr(item, "filename", ""):
+                    content = item.file.read()
+                    total_bytes += len(content)
                     files.append({
                         "name": item.filename,
-                        "content": item.file.read(),
+                        "content": content,
                     })
             if not files:
                 self.send_json({"error": "Не выбраны файлы"}, status=HTTPStatus.BAD_REQUEST)
                 return
+            if len(files) > UPLOAD_MAX_FILES:
+                self.send_json({"error": f"Слишком много файлов. Лимит: {UPLOAD_MAX_FILES}"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            if total_bytes > UPLOAD_MAX_BATCH_BYTES:
+                self.send_json({"error": f"Слишком большой batch. Лимит: {UPLOAD_MAX_BATCH_BYTES // (1024 * 1024)} MB"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            if any(len(file_item["content"]) > UPLOAD_MAX_FILE_BYTES for file_item in files):
+                self.send_json({"error": f"Один из файлов слишком большой. Лимит: {UPLOAD_MAX_FILE_BYTES // (1024 * 1024)} MB"}, status=HTTPStatus.BAD_REQUEST)
+                return
             account_id = int(account["id"])
-            RUNTIME_STATUS["imports"][account_id] = {"active": True, "message": f"Загрузка {len(files)} файлов"}
-            meta = ingest_uploaded_files(RuntimeConfig(), account_id, files)
-            RUNTIME_STATUS["imports"][account_id] = {
-                "active": False,
-                "message": f"Импорт завершён: обработано {meta['processed_files']}, пропущено {meta['skipped_files']}",
-            }
-            self.send_json({"ok": True, "meta": meta})
+            payload_json = json.dumps(
+                {
+                    "files": [
+                        {"name": file_item["name"], "content_hex": file_item["content"].hex()}
+                        for file_item in files
+                    ]
+                },
+                ensure_ascii=False,
+            )
+            with self.db.transaction() as conn:
+                job_id = self.db.create_background_job(
+                    conn,
+                    owner_account_id=account_id,
+                    job_type="ingest",
+                    total_files=len(files),
+                    payload_json=payload_json,
+                    created_at=iso_now(),
+                )
+                self.db.append_audit_log(
+                    conn,
+                    actor_account_id=account_id,
+                    target_account_id=account_id,
+                    event_type="upload_job_created",
+                    payload_json=json.dumps({"job_id": job_id, "files": len(files)}, ensure_ascii=False),
+                    created_at=iso_now(),
+                )
+            ensure_workers(self.db.url)
+            enqueue_job(self.db.url, job_id)
+            self.send_json({"ok": True, "job_id": job_id})
         except Exception as exc:
-            RUNTIME_STATUS["imports"][account_id] = {"active": False, "message": f"Ошибка импорта: {exc}"}
+            self.send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+
+    def handle_jobs(self):
+        try:
+            account = self.require_account()
+            with self.db.transaction() as conn:
+                jobs = self.db.list_background_jobs(conn, int(account["id"]))
+            self.send_json({"jobs": jobs})
+        except PermissionError as exc:
+            self.send_json({"error": str(exc)}, status=HTTPStatus.UNAUTHORIZED)
+
+    def handle_job(self, job_id_raw: str):
+        try:
+            account = self.require_account()
+            job_id = int(job_id_raw)
+            with self.db.transaction() as conn:
+                job = self.db.get_background_job(conn, job_id)
+            if not job or int(job.get("owner_account_id") or 0) != int(account["id"]):
+                self.send_json({"error": "Job не найден"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self.send_json({"job": job})
+        except PermissionError as exc:
+            self.send_json({"error": str(exc)}, status=HTTPStatus.UNAUTHORIZED)
+        except Exception as exc:
             self.send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
 
     def handle_monthly_history(self):
@@ -383,10 +479,17 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
         if not account:
             self.send_json({"monthly_processing": False, "monthly_message": ""})
             return
-        status = RUNTIME_STATUS["imports"].get(int(account["id"]), {"active": False, "message": ""})
+        with self.db.transaction() as conn:
+            jobs = self.db.list_background_jobs(conn, int(account["id"]), limit=5)
+        active_job = next((job for job in jobs if job.get("status") in {"queued", "running"}), None)
+        if not active_job:
+            self.send_json({"monthly_processing": False, "monthly_message": ""})
+            return
+        stage = str(active_job.get("stage") or active_job.get("status") or "queued")
+        status = str(active_job.get("status") or "queued")
         self.send_json({
-            "monthly_processing": bool(status.get("active")),
-            "monthly_message": str(status.get("message") or ""),
+            "monthly_processing": True,
+            "monthly_message": f"Job #{active_job['id']}: {stage} ({status}), {active_job.get('progress_percent') or 0}%",
         })
 
     def handle_admin_users(self):
@@ -405,10 +508,12 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                 overview = self.db.admin_overview(conn)
                 recent_logins = self.db.list_recent_logins(conn)
                 recent_uploads = self.db.list_recent_uploads(conn)
+                recent_audit = self.db.list_audit_log(conn, limit=20)
             self.send_json({
                 "overview": overview,
                 "recent_logins": recent_logins,
                 "recent_uploads": recent_uploads,
+                "recent_audit": recent_audit,
             })
         except PermissionError as exc:
             self.send_json({"error": str(exc)}, status=HTTPStatus.UNAUTHORIZED)
@@ -424,12 +529,20 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                 raise ValueError("Некорректная роль")
             with self.db.transaction() as conn:
                 self.db.update_account(conn, account_id, role=role, is_active=is_active)
+                actor = self.require_admin()
+                self.db.append_audit_log(
+                    conn,
+                    actor_account_id=int(actor["id"]),
+                    target_account_id=account_id,
+                    event_type="admin_update_user",
+                    payload_json=json.dumps({"role": role, "is_active": is_active}, ensure_ascii=False),
+                    created_at=iso_now(),
+                )
             self.send_json({"ok": True})
         except PermissionError as exc:
             self.send_json({"error": str(exc)}, status=HTTPStatus.UNAUTHORIZED)
         except Exception as exc:
             self.send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
-
 
 def run_server(host: str = "127.0.0.1", port: int = 8000):
     handler = partial(DashboardRequestHandler, directory=WEB_ROOT)
