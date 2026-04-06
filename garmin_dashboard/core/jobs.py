@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import traceback
 import queue
 import shutil
 import threading
@@ -17,6 +18,8 @@ from .db_ingest import parse_fit_file_to_activity, update_monthly_history_for_in
 _JOB_QUEUE: "queue.Queue[tuple[str, int]]" = queue.Queue()
 _WORKERS_STARTED: set[str] = set()
 _WORKER_LOCK = threading.Lock()
+_SCHEMA_READY_DATABASES: set[str] = set()
+_SCHEMA_READY_LOCK = threading.Lock()
 
 
 def iso_now() -> str:
@@ -32,6 +35,16 @@ def ensure_workers(database_url: str) -> None:
         thread = threading.Thread(target=_worker_loop, args=(database_url,), daemon=True)
         thread.start()
         _WORKERS_STARTED.add(database_url)
+
+
+def ensure_job_schema(database_url: str) -> None:
+    if database_url in _SCHEMA_READY_DATABASES:
+        return
+    with _SCHEMA_READY_LOCK:
+        if database_url in _SCHEMA_READY_DATABASES:
+            return
+        Database(database_url).init_schema()
+        _SCHEMA_READY_DATABASES.add(database_url)
 
 
 def enqueue_job(database_url: str, job_id: int) -> None:
@@ -55,9 +68,21 @@ def _worker_loop(database_url: str) -> None:
             continue
         try:
             process_job(database_url, job_id)
-        except Exception:
+        except Exception as exc:
             # Keep the worker alive even if one job crashes unexpectedly.
-            pass
+            print(f"[jobs] Worker crashed while processing job #{job_id}: {exc}")
+            traceback.print_exc()
+            try:
+                db = Database(database_url)
+                owner_account_id = None
+                with db.transaction() as conn:
+                    job = db.get_background_job(conn, job_id)
+                    if job and job.get("owner_account_id") is not None:
+                        owner_account_id = int(job["owner_account_id"])
+                _finalize_job_failure(db, job_id, owner_account_id, str(exc))
+            except Exception as finalize_exc:
+                print(f"[jobs] Failed to finalize job #{job_id} after worker crash: {finalize_exc}")
+                traceback.print_exc()
         finally:
             _JOB_QUEUE.task_done()
 
@@ -129,8 +154,8 @@ def _process_monthly_history_job(db: Database, job_id: int, job: dict) -> None:
 
 
 def process_job(database_url: str, job_id: int) -> None:
+    ensure_job_schema(database_url)
     db = Database(database_url)
-    db.init_schema()
     started = perf_counter()
     owner_account_id: int | None = None
     with db.transaction() as conn:

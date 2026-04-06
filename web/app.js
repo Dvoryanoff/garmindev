@@ -51,7 +51,6 @@ const distancePickerEl = document.getElementById("distancePicker");
 const selectedDistancesTextEl = document.getElementById("selectedDistancesText");
 const loadButtonEl = document.getElementById("loadButton");
 const metricsEl = document.getElementById("metrics");
-const runtimeBannerEl = document.getElementById("runtimeBanner");
 const summaryTableEl = document.querySelector("#summaryTable tbody");
 const workoutsTableEl = document.querySelector("#workoutsTable tbody");
 const metaBoxEl = document.getElementById("metaBox");
@@ -69,8 +68,13 @@ let sessionState = null;
 let monthlyHistoryState = { headers: [], years: [], rows: [] };
 let authRequestState = { login: false, register: false };
 let activeUploadJobId = null;
+let activeUploadPollPromise = null;
 const MAX_FILES_PER_BATCH = 50;
 const MAX_BATCH_BYTES = 16 * 1024 * 1024;
+const SESSION_HEARTBEAT_MS = 60 * 1000;
+const BROWSER_SESSION_DAY_KEY = "garmin_browser_session_day";
+const DEFAULT_UPLOAD_HINT =
+  "Старые файлы будут проигнорированы по hash, новые тренировки попадут в базу пользователя. Можно загружать и папкой.";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -96,6 +100,41 @@ function showApp() {
   appViewEl.hidden = false;
 }
 
+function currentCalendarDay() {
+  return new Date().toLocaleDateString("sv-SE");
+}
+
+function getBrowserSessionDay() {
+  return window.sessionStorage.getItem(BROWSER_SESSION_DAY_KEY) || "";
+}
+
+function markBrowserSessionActive() {
+  window.sessionStorage.setItem(BROWSER_SESSION_DAY_KEY, currentCalendarDay());
+}
+
+function clearBrowserSessionMarker() {
+  window.sessionStorage.removeItem(BROWSER_SESSION_DAY_KEY);
+}
+
+function shouldForceReloginOnRestore(session) {
+  if (getBrowserSessionDay()) {
+    return false;
+  }
+  const loginDay = String(session?.session?.login_day || "");
+  return Boolean(loginDay) && loginDay !== currentCalendarDay();
+}
+
+function handleUnauthorizedError(error, message = "Сессия завершилась. Войди снова.") {
+  if (error?.status !== 401) {
+    return false;
+  }
+  sessionState = null;
+  clearBrowserSessionMarker();
+  showAuth();
+  setFormStatus(loginStatusEl, message, "error");
+  return true;
+}
+
 function showAuthForm(mode) {
   authChooserEl.hidden = true;
   authFormsEl.hidden = false;
@@ -117,9 +156,26 @@ function setFormStatus(element, message = "", kind = "") {
   }
 }
 
+function formatJobStage(stage, status) {
+  const normalized = String(stage || status || "queued");
+  const labels = {
+    queued: "ожидает старта",
+    ingest: "обрабатывает файлы",
+    monthly_history: "обновляет помесячную историю",
+    done: "завершён",
+    failed: "завершён с ошибкой",
+  };
+  return labels[normalized] || normalized;
+}
+
 function showDashboard(hasData) {
   uploadOnlyStateEl.hidden = hasData;
   dashboardContentEl.hidden = !hasData;
+}
+
+function setUploadButtonsDisabled(disabled) {
+  uploadButtonEl.disabled = disabled;
+  uploadButtonEmptyEl.disabled = disabled;
 }
 
 async function api(path, options = {}) {
@@ -131,7 +187,9 @@ async function api(path, options = {}) {
   const payload = contentType.includes("application/json") ? await response.json() : null;
   const fallbackText = payload ? "" : await response.text();
   if (!response.ok) {
-    throw new Error((payload && payload.error) || fallbackText || `Ошибка запроса (${response.status})`);
+    const error = new Error((payload && payload.error) || fallbackText || `Ошибка запроса (${response.status})`);
+    error.status = response.status;
+    throw error;
   }
   return payload;
 }
@@ -293,16 +351,60 @@ function renderWorkouts(rows) {
 }
 
 function renderMeta(meta) {
-  const timings = meta.timings || {};
+  const monthNames = [
+    "января",
+    "февраля",
+    "марта",
+    "апреля",
+    "мая",
+    "июня",
+    "июля",
+    "августа",
+    "сентября",
+    "октября",
+    "ноября",
+    "декабря",
+  ];
+  const formatFriendlyDate = (value) => {
+    if (!value) {
+      return "";
+    }
+    const [year, month, day] = String(value).split("-");
+    const monthIndex = Number(month) - 1;
+    if (!year || !day || monthIndex < 0 || monthIndex > 11) {
+      return String(value);
+    }
+    return `${Number(day)} ${monthNames[monthIndex]} ${year}`;
+  };
+  const firstActivityDate = meta.first_activity_date || meta.db_first_activity_date || "";
+  const lastActivityDate = meta.last_activity_date || meta.db_last_activity_date || "";
+  const rangeText = firstActivityDate && lastActivityDate
+    ? `${formatFriendlyDate(firstActivityDate)} - ${formatFriendlyDate(lastActivityDate)}`
+    : "Диапазон появится после первой обработанной тренировки";
   metaBoxEl.innerHTML = `
-    <div><strong>Файлов в базе:</strong> ${escapeHtml(meta.db_total_files ?? meta.total_files ?? 0)}</div>
-    <div><strong>Готовых:</strong> ${escapeHtml(meta.db_ready_files ?? meta.ready_files ?? 0)}</div>
-    <div><strong>Дубликатов:</strong> ${escapeHtml(meta.db_duplicate_files ?? meta.duplicate_files ?? 0)}</div>
-    <div><strong>Ошибок:</strong> ${escapeHtml(meta.db_error_files ?? meta.error_files ?? 0)}</div>
-    <div><strong>Интервалов:</strong> ${escapeHtml(meta.db_total_rows ?? 0)}</div>
-    <div><strong>Сгенерировано:</strong> ${escapeHtml(meta.generated_at || "—")}</div>
-    <hr>
-    <div><strong>Время операции:</strong> ${escapeHtml(timings.total || "—")}</div>
+    <div class="meta-grid">
+      <div class="meta-item">
+        <span class="meta-label">Файлов в базе</span>
+        <div class="meta-value">${escapeHtml(meta.db_total_files ?? meta.total_files ?? 0)}</div>
+      </div>
+      <div class="meta-item">
+        <span class="meta-label">Тренировок в базе</span>
+        <div class="meta-value">${escapeHtml(meta.db_total_activities ?? meta.total_activities ?? 0)}</div>
+      </div>
+      <div class="meta-item">
+        <span class="meta-label">Интервалов</span>
+        <div class="meta-value">${escapeHtml(meta.db_total_rows ?? meta.total_rows ?? 0)}</div>
+      </div>
+      <div class="meta-item">
+        <span class="meta-label">Готовых файлов</span>
+        <div class="meta-value">${escapeHtml(meta.db_ready_files ?? meta.ready_files ?? 0)}</div>
+      </div>
+    </div>
+    <div class="meta-range">
+      <span class="meta-label">Период загруженных тренировок</span>
+      <div class="meta-value">${escapeHtml(rangeText)}</div>
+    </div>
+    <div class="meta-note">Сводка показывает, сколько тренировок уже лежит в базе пользователя и за какой период они покрывают историю.</div>
   `;
 }
 
@@ -343,24 +445,22 @@ function renderMonthlyHistoryYear(year) {
     : `<tr><td colspan="${headers.length + 1}">Пока нет monthly history.</td></tr>`;
 }
 
-function setRuntimeBanner(message = "", visible = false) {
-  runtimeBannerEl.textContent = message;
-  runtimeBannerEl.classList.toggle("is-hidden", !visible || !message);
-}
-
 async function refreshRuntimeStatus() {
   if (!sessionState?.authenticated) {
+    return;
+  }
+  if (activeUploadJobId) {
     return;
   }
   try {
     const payload = await api(`/api/runtime-status?_ts=${Date.now()}`);
     if (payload.monthly_processing) {
-      setRuntimeBanner(payload.monthly_message || "Обработка данных...", true);
+      setUploadHint(payload.monthly_message || "Обработка данных...");
     } else {
-      setRuntimeBanner(payload.monthly_message || "", Boolean(payload.monthly_message));
+      setUploadHint(DEFAULT_UPLOAD_HINT);
     }
   } catch (error) {
-    // keep quiet
+    handleUnauthorizedError(error);
   }
 }
 
@@ -383,13 +483,15 @@ async function loadReport() {
         long_min_distance: payload.filters?.long_freestyle_min_distance_m ?? longMinDistanceEl.value,
       },
     };
-    setRuntimeBanner("", false);
     renderMetrics(payload.overview, payload.filters);
     renderSummary(payload.summary);
     renderWorkouts(payload.workouts);
     renderMeta(payload.dataset_meta);
   } catch (error) {
-    setRuntimeBanner("Показан предыдущий успешный отчёт. Последнее обновление завершилось ошибкой.", true);
+    if (handleUnauthorizedError(error)) {
+      return;
+    }
+    setUploadHint("Показан предыдущий успешный отчёт. Последнее обновление завершилось ошибкой.");
     alert(error.message);
   } finally {
     loadButtonEl.disabled = false;
@@ -401,6 +503,9 @@ async function loadMonthlyHistory() {
     const payload = await api(`/api/monthly-history?_ts=${Date.now()}`);
     renderMonthlyHistory(payload);
   } catch (error) {
+    if (handleUnauthorizedError(error)) {
+      return;
+    }
     monthlyTableBodyEl.innerHTML = `<tr><td colspan="10">${escapeHtml(error.message)}</td></tr>`;
   }
 }
@@ -408,9 +513,18 @@ async function loadMonthlyHistory() {
 async function refreshSession() {
   sessionState = await api(`/api/auth/session?_ts=${Date.now()}`);
   if (!sessionState.authenticated) {
+    clearBrowserSessionMarker();
     showAuth();
     return false;
   }
+  if (shouldForceReloginOnRestore(sessionState)) {
+    await logout({
+      reason: "С прошлого входа сменился календарный день. Войди снова.",
+      suppressNetworkErrors: true,
+    });
+    return false;
+  }
+  markBrowserSessionActive();
   showApp();
   const account = sessionState.account;
   accountNameEl.textContent = `${account.first_name} ${account.last_name}`;
@@ -429,13 +543,42 @@ async function refreshSession() {
     workoutsTableEl.innerHTML = "";
     monthlyHeaderRowEl.innerHTML = "";
     monthlyTableBodyEl.innerHTML = "";
-    metaBoxEl.innerHTML = `
-      <div><strong>Файлов в базе:</strong> 0</div>
-      <div><strong>Статус:</strong> ждём первую загрузку FIT-файлов</div>
-    `;
+    renderMeta({
+      total_files: 0,
+      ready_files: 0,
+      duplicate_files: 0,
+      error_files: 0,
+      total_rows: 0,
+      first_activity_date: "",
+      last_activity_date: "",
+      timings: {},
+    });
   }
   await refreshRuntimeStatus();
+  resumeActiveUploadJob().catch(() => {});
   return true;
+}
+
+async function checkSessionHeartbeat() {
+  if (!sessionState?.authenticated) {
+    return;
+  }
+  try {
+    const payload = await api(`/api/auth/session?_ts=${Date.now()}`);
+    if (!payload.authenticated) {
+      throw Object.assign(new Error("Требуется вход"), { status: 401 });
+    }
+    sessionState = {
+      ...sessionState,
+      authenticated: true,
+      account: payload.account,
+      is_admin: payload.is_admin,
+      session: payload.session,
+    };
+    markBrowserSessionActive();
+  } catch (error) {
+    handleUnauthorizedError(error);
+  }
 }
 
 async function login() {
@@ -519,38 +662,91 @@ async function register() {
   }
 }
 
-async function pollUploadJob(jobId) {
-  activeUploadJobId = jobId;
-  let reportRefreshedWhileRunning = false;
-  let lastRenderedProgress = -1;
-  while (activeUploadJobId === jobId) {
-    const payload = await api(`/api/jobs/${jobId}?_ts=${Date.now()}`);
-    const job = payload.job || {};
-    setUploadHint(`Job #${job.id}: ${job.stage || job.status}. ${job.progress_percent || 0}%`);
-    if (!dashboardContentEl.hidden && job.error_text) {
-      setRuntimeBanner(job.error_text, true);
-    }
-    if (Number(job.processed_files || 0) > 0 && (job.progress_percent || 0) >= 20 && (job.progress_percent || 0) !== lastRenderedProgress) {
-      lastRenderedProgress = job.progress_percent || 0;
-      showDashboard(true);
-      if (!reportRefreshedWhileRunning || lastRenderedProgress >= 60) {
-        reportRefreshedWhileRunning = true;
-        await Promise.allSettled([loadReport(), loadMonthlyHistory()]);
-      }
-    }
-    if (job.status === "done" || job.status === "partial" || job.status === "failed") {
-      activeUploadJobId = null;
-      return job;
-    }
-    await new Promise((resolve) => window.setTimeout(resolve, 1200));
+async function pollUploadJob(jobId, context = {}) {
+  if (activeUploadPollPromise && activeUploadJobId === jobId) {
+    return activeUploadPollPromise;
   }
-  return null;
+  activeUploadJobId = jobId;
+  setUploadButtonsDisabled(true);
+  activeUploadPollPromise = (async () => {
+    let reportRefreshedWhileRunning = false;
+    let lastRenderedProgress = -1;
+    const waitStartedAt = Date.now();
+    while (activeUploadJobId === jobId) {
+      const payload = await api(`/api/jobs/${jobId}?_ts=${Date.now()}`);
+      const job = payload.job || {};
+      const jobStage = formatJobStage(job.stage, job.status);
+      const jobProgress = Number(job.progress_percent || 0);
+      const processedFiles = Number(job.processed_files || 0);
+      const skippedFiles = Number(job.skipped_files || 0);
+      const duplicateFiles = Number(job.duplicate_files || 0);
+      const errorFiles = Number(job.error_files || 0);
+      const totalFiles = Number(job.total_files || 0);
+      const batchLabel = context.label || (context.totalBatches
+        ? `Пакет ${context.batchIndex || 1}/${context.totalBatches}`
+        : `Job #${job.id}`);
+      const waitSeconds = Math.max(0, Math.floor((Date.now() - waitStartedAt) / 1000));
+      const statusParts = [
+        `${batchLabel}: ${jobStage}`,
+        `${jobProgress}%`,
+      ];
+      if (job.status === "queued" && !job.started_at) {
+        statusParts.push(`worker ещё не стартовал ${waitSeconds} сек`);
+      }
+      if (totalFiles > 0) {
+        statusParts.push(`в job файлов: ${totalFiles}`);
+      }
+      statusParts.push(
+        `обработано ${processedFiles}`,
+        `пропущено ${skippedFiles}`,
+        `дубликаты ${duplicateFiles}`,
+        `ошибки ${errorFiles}`,
+      );
+      setUploadHint(statusParts.join(" • "));
+      if (!dashboardContentEl.hidden && job.error_text) {
+        setUploadHint(job.error_text);
+      }
+      if (processedFiles > 0 && jobProgress >= 20 && jobProgress !== lastRenderedProgress) {
+        lastRenderedProgress = jobProgress;
+        showDashboard(true);
+        if (!reportRefreshedWhileRunning || lastRenderedProgress >= 60) {
+          reportRefreshedWhileRunning = true;
+          await Promise.allSettled([loadReport(), loadMonthlyHistory()]);
+        }
+      }
+      if (job.status === "done" || job.status === "partial" || job.status === "failed") {
+        activeUploadJobId = null;
+        return job;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 1200));
+    }
+    return null;
+  })();
+  try {
+    return await activeUploadPollPromise;
+  } finally {
+    activeUploadPollPromise = null;
+    if (!activeUploadJobId) {
+      setUploadButtonsDisabled(false);
+    }
+  }
 }
 
-async function logout() {
-  await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
+async function logout(options = {}) {
+  const { reason = "", suppressNetworkErrors = false } = options;
+  try {
+    await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
+  } catch (error) {
+    if (!suppressNetworkErrors) {
+      throw error;
+    }
+  }
   sessionState = null;
+  clearBrowserSessionMarker();
   showAuth();
+  if (reason) {
+    setFormStatus(loginStatusEl, reason, "error");
+  }
 }
 
 async function uploadFiles() {
@@ -559,23 +755,32 @@ async function uploadFiles() {
     alert("Выбери хотя бы один FIT-файл или папку с FIT-файлами.");
     return;
   }
-  uploadButtonEl.disabled = true;
-  uploadButtonEmptyEl.disabled = true;
+  setUploadButtonsDisabled(true);
   try {
     const batches = buildUploadBatches(files);
+    setUploadHint(`Подготовлено FIT-файлов: ${files.length}. Пакетов для загрузки: ${batches.length}.`);
     let processed = 0;
     let skipped = 0;
     let duplicates = 0;
     let errors = 0;
     for (let index = 0; index < batches.length; index += 1) {
-      setUploadHint(`Создаём job для пакета ${index + 1} из ${batches.length}...`);
+      const batch = batches[index];
+      const batchBytes = batch.reduce((sum, file) => sum + Number(file.size || 0), 0);
+      setUploadHint(
+        `Загружаем пакет ${index + 1} из ${batches.length}: ${batch.length} файлов, ${(
+          batchBytes / (1024 * 1024)
+        ).toFixed(1)} MB`
+      );
       const formData = new FormData();
-      batches[index].forEach((file) => formData.append("files", file, file.webkitRelativePath || file.name));
+      batch.forEach((file) => formData.append("files", file, file.webkitRelativePath || file.name));
       const payload = await api("/api/upload", {
         method: "POST",
         body: formData,
       });
-      const job = await pollUploadJob(payload.job_id);
+      const job = await pollUploadJob(payload.job_id, {
+        batchIndex: index + 1,
+        totalBatches: batches.length,
+      });
       if (!job) {
         throw new Error("Не удалось дождаться завершения job.");
       }
@@ -591,17 +796,35 @@ async function uploadFiles() {
     }
     alert(`Импорт завершён. Обработано: ${processed}, пропущено: ${skipped}, дубликаты: ${duplicates}, ошибки: ${errors}`);
     clearUploadInputs();
-    setUploadHint("Старые файлы будут проигнорированы по hash, новые тренировки попадут в базу пользователя. Можно загружать и папкой.");
+    setUploadHint(DEFAULT_UPLOAD_HINT);
     showDashboard(true);
     await loadReport();
     await loadMonthlyHistory();
   } catch (error) {
+    if (handleUnauthorizedError(error)) {
+      return;
+    }
     alert(error.message);
     setUploadHint(error.message);
   } finally {
-    uploadButtonEl.disabled = false;
-    uploadButtonEmptyEl.disabled = false;
+    if (!activeUploadJobId) {
+      setUploadButtonsDisabled(false);
+    }
   }
+}
+
+async function resumeActiveUploadJob() {
+  if (!sessionState?.authenticated || activeUploadJobId || activeUploadPollPromise) {
+    return;
+  }
+  const payload = await api(`/api/jobs?_ts=${Date.now()}`);
+  const jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
+  const activeJob = jobs.find((job) => job.job_type === "ingest" && ["queued", "running"].includes(job.status));
+  if (!activeJob) {
+    return;
+  }
+  setUploadHint(`Восстанавливаем прогресс незавершённой загрузки Job #${activeJob.id}...`);
+  await pollUploadJob(activeJob.id, { label: `Продолжаем Job #${activeJob.id}` });
 }
 
 function getPendingUploadFiles() {
@@ -696,6 +919,7 @@ updateUploadSelection();
 monthlyExportEl.href = "/api/export/monthly-history.xlsx";
 monthlyYearSelectEl.addEventListener("change", () => renderMonthlyHistoryYear(Number(monthlyYearSelectEl.value)));
 runtimeStatusTimer = window.setInterval(refreshRuntimeStatus, 3000);
+window.setInterval(checkSessionHeartbeat, SESSION_HEARTBEAT_MS);
 
 (async () => {
   try {

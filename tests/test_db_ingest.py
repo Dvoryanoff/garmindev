@@ -98,7 +98,7 @@ class DatabaseIngestTestCase(unittest.TestCase):
             self.assertEqual(report_second["overview"]["intervals"], 1)
             self.assertEqual(meta_second["skipped_files"], 1)
 
-    def test_build_report_excludes_long_distances_when_threshold_group_not_selected(self):
+    def test_build_report_includes_pool_long_distances_above_threshold(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             db_path = root / "garmin_dashboard.sqlite"
@@ -132,8 +132,8 @@ class DatabaseIngestTestCase(unittest.TestCase):
                     "garmin_user_id": "user-2",
                     "garmin_user_name": "Maria",
                     "sport": "swimming",
-                    "sub_sport": "open_water",
-                    "swim_type": "open_water",
+                    "sub_sport": "lap_swimming",
+                    "swim_type": "pool",
                     "total_distance_m": 1003.0,
                     "total_time_s": 1752.0,
                 },
@@ -153,7 +153,7 @@ class DatabaseIngestTestCase(unittest.TestCase):
                         "workout_total_distance_m": 1003.0,
                         "workout_total_time_s": 1752.0,
                         "stroke": "freestyle",
-                        "swim_type": "open_water",
+                        "swim_type": "pool",
                         "pace_100m_s": 174.68,
                         "pace_100m": "2:55/100m",
                     }
@@ -167,13 +167,13 @@ class DatabaseIngestTestCase(unittest.TestCase):
                 swim_mode="all",
                 period="all",
                 owner_account_id=account_id,
-                interval_config=IntervalConfig(target_distances=(1200,), long_freestyle_min_distance_m=1200.0),
+                interval_config=IntervalConfig(target_distances=(1000,), long_freestyle_min_distance_m=1000.0),
                 runtime_config=runtime,
             )
             report = build_report(request)
 
-            self.assertEqual(report["overview"]["intervals"], 0)
-            self.assertEqual(report["summary"], [])
+            self.assertEqual(report["overview"]["intervals"], 1)
+            self.assertEqual(report["summary"][0]["distance_m"], 1003)
 
     def test_build_report_includes_open_water_distances_above_threshold_when_1000_selected(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -535,7 +535,7 @@ class DatabaseIngestTestCase(unittest.TestCase):
                 swim_mode="open_water",
                 period="all",
                 owner_account_id=account_id,
-                interval_config=IntervalConfig(target_distances=(1000,), long_freestyle_min_distance_m=1000.0),
+                interval_config=IntervalConfig(target_distances=(400, 800), long_freestyle_min_distance_m=1000.0),
                 runtime_config=runtime,
             )
             open_report = build_report(open_request)
@@ -547,13 +547,90 @@ class DatabaseIngestTestCase(unittest.TestCase):
                 swim_mode="all",
                 period="all",
                 owner_account_id=account_id,
-                interval_config=IntervalConfig(target_distances=(400, 800, 1000), long_freestyle_min_distance_m=1000.0),
+                interval_config=IntervalConfig(target_distances=(400, 800), long_freestyle_min_distance_m=1000.0),
                 runtime_config=runtime,
             )
             all_report = build_report(all_request)
             self.assertEqual(all_report["overview"]["intervals"], 4)
             self.assertEqual(len(all_report["workouts"]), 4)
             self.assertEqual(sorted(row["distance_m"] for row in all_report["summary"]), [400, 800, 1200, 1500])
+
+    def test_build_report_includes_any_unique_distance_above_threshold(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_path = root / "garmin_dashboard.sqlite"
+            upload_dir = root / "uploads"
+            runtime = RuntimeConfig(
+                database_url=f"sqlite:///{db_path}",
+                upload_dir=upload_dir,
+                db_auto_ingest=False,
+            )
+            db = Database(runtime.database_url)
+            db.init_schema()
+            with db.transaction() as conn:
+                account_id = db.create_account(
+                    conn,
+                    email="threshold@example.com",
+                    password_hash=hash_password("password123"),
+                    first_name="Threshold",
+                    last_name="Tester",
+                    role="user",
+                    created_at="2026-04-04 10:00:00",
+                )
+
+            parsed = {
+                "status": "ready",
+                "error_text": "",
+                "activity_key": "user-5|2026-04-04T10:00:00",
+                "payload": {"messages": {"session_mesgs": [{"sport": "swimming"}]}},
+                "activity": {
+                    "activity_key": "user-5|2026-04-04T10:00:00",
+                    "activity_date": "2026-04-04 10:00:00",
+                    "garmin_user_id": "user-5",
+                    "garmin_user_name": "Threshold",
+                    "sport": "swimming",
+                    "sub_sport": "lap_swimming",
+                    "swim_type": "pool",
+                    "total_distance_m": 1300.0,
+                    "total_time_s": 2400.0,
+                },
+                "intervals": [
+                    {
+                        "file_name": "threshold.fit",
+                        "activity_key": "user-5|2026-04-04T10:00:00",
+                        "activity_date": "2026-04-04 10:00:00",
+                        "user_id": "user-5",
+                        "user_name": "Threshold",
+                        "lap_start": "2026-04-04 10:00:00",
+                        "lap_end": "2026-04-04 10:40:00",
+                        "distance_m": 1300,
+                        "raw_distance_m": 1300.0,
+                        "time_s": 2400.0,
+                        "time_text": "40:00",
+                        "workout_total_distance_m": 1300.0,
+                        "workout_total_time_s": 2400.0,
+                        "stroke": "freestyle",
+                        "swim_type": "pool",
+                        "pace_100m_s": 184.62,
+                        "pace_100m": "3:04/100m",
+                    }
+                ],
+            }
+
+            with patch("garmin_dashboard.core.db_ingest.parse_fit_file_to_activity", return_value=parsed):
+                ingest_uploaded_files(runtime, account_id, [{"name": "threshold.fit", "content": b"fit"}])
+
+            request = ReportRequest(
+                swim_mode="all",
+                period="all",
+                owner_account_id=account_id,
+                interval_config=IntervalConfig(target_distances=(50, 100, 200, 400, 800), long_freestyle_min_distance_m=1000.0),
+                runtime_config=runtime,
+            )
+            report = build_report(request)
+
+            self.assertEqual(report["overview"]["intervals"], 1)
+            self.assertEqual(report["summary"][0]["distance_m"], 1300)
 
 
 if __name__ == "__main__":

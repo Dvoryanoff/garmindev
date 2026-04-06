@@ -33,25 +33,13 @@ def row_matches_interval_config(row: dict, request: ReportRequest) -> bool:
     )
     if distance is None:
         return False
-    if distance not in request.interval_config.target_distances:
-        long_min_distance = int(round(request.interval_config.long_freestyle_min_distance_m))
-        if not (
-            distance > request.interval_config.long_freestyle_min_distance_m
-            and long_min_distance in request.interval_config.target_distances
-        ):
-            return False
     row["distance_m"] = distance
     return True
 
 
 def is_long_distance_selected(row: dict, distance: int, request: ReportRequest) -> bool:
-    long_min_distance = int(round(request.interval_config.long_freestyle_min_distance_m))
     return (
-        row.get("swim_type") == "open_water"
-        and request.swim_mode in {"all", "open_water"}
-        and
         distance > request.interval_config.long_freestyle_min_distance_m
-        and long_min_distance in request.interval_config.target_distances
     )
 
 
@@ -305,6 +293,9 @@ def build_report(request: ReportRequest) -> dict:
         "db_error_files": db_meta.get("error_files", 0),
         "db_duplicate_files": db_meta.get("duplicate_files", 0),
         "db_total_rows": db_meta.get("total_rows", 0),
+        "db_total_activities": db_meta.get("total_activities", 0),
+        "db_first_activity_date": db_meta.get("first_activity_date", ""),
+        "db_last_activity_date": db_meta.get("last_activity_date", ""),
         "generated_at": datetime.now().isoformat(timespec="seconds"),
     }
 

@@ -16,6 +16,8 @@ const adminUploadsTableEl = document.querySelector("#adminUploadsTable tbody");
 const adminAuditTableEl = document.querySelector("#adminAuditTable tbody");
 
 let adminLoginInFlight = false;
+const ADMIN_SESSION_HEARTBEAT_MS = 60 * 1000;
+const BROWSER_SESSION_DAY_KEY = "garmin_browser_session_day";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -46,6 +48,30 @@ function showAdminApp(account) {
   adminAccountEmailEl.textContent = account.email;
 }
 
+function currentCalendarDay() {
+  return new Date().toLocaleDateString("sv-SE");
+}
+
+function getBrowserSessionDay() {
+  return window.sessionStorage.getItem(BROWSER_SESSION_DAY_KEY) || "";
+}
+
+function markBrowserSessionActive() {
+  window.sessionStorage.setItem(BROWSER_SESSION_DAY_KEY, currentCalendarDay());
+}
+
+function clearBrowserSessionMarker() {
+  window.sessionStorage.removeItem(BROWSER_SESSION_DAY_KEY);
+}
+
+function shouldForceReloginOnRestore(session) {
+  if (getBrowserSessionDay()) {
+    return false;
+  }
+  const loginDay = String(session?.session?.login_day || "");
+  return Boolean(loginDay) && loginDay !== currentCalendarDay();
+}
+
 function setAdminOnlyMessage(message = "", visible = false) {
   adminOnlyMessageEl.textContent = message;
   adminOnlyMessageEl.classList.toggle("is-hidden", !visible || !message);
@@ -60,7 +86,9 @@ async function api(path, options = {}) {
   const payload = contentType.includes("application/json") ? await response.json() : null;
   const fallbackText = payload ? "" : await response.text();
   if (!response.ok) {
-    throw new Error((payload && payload.error) || fallbackText || `Ошибка запроса (${response.status})`);
+    const error = new Error((payload && payload.error) || fallbackText || `Ошибка запроса (${response.status})`);
+    error.status = response.status;
+    throw error;
   }
   return payload;
 }
@@ -174,9 +202,18 @@ async function loadAdminOverview() {
 async function refreshAdminSession() {
   const session = await api(`/api/auth/session?_ts=${Date.now()}`);
   if (!session.authenticated) {
+    clearBrowserSessionMarker();
     showAuth();
     return false;
   }
+  if (shouldForceReloginOnRestore(session)) {
+    await logoutAdmin({
+      reason: "С прошлого входа сменился календарный день. Войди снова.",
+      suppressNetworkErrors: true,
+    });
+    return false;
+  }
+  markBrowserSessionActive();
   if (!session.is_admin) {
     showAuth();
     setAdminOnlyMessage("Для этого раздела нужны права администратора.", true);
@@ -197,6 +234,25 @@ async function refreshAdminSession() {
     setAdminOnlyMessage(`Не удалось загрузить обзор админки: ${error.message}`, true);
   });
   return true;
+}
+
+async function heartbeatAdminSession() {
+  if (adminAppViewEl.hidden) {
+    return;
+  }
+  try {
+    const session = await api(`/api/auth/session?_ts=${Date.now()}`);
+    if (!session.authenticated) {
+      throw Object.assign(new Error("Требуется вход"), { status: 401 });
+    }
+    markBrowserSessionActive();
+  } catch (error) {
+    if (error?.status === 401) {
+      clearBrowserSessionMarker();
+      showAuth();
+      setStatus("Сессия завершилась. Войди снова.", "error");
+    }
+  }
 }
 
 async function loginAdmin() {
@@ -225,9 +281,20 @@ async function loginAdmin() {
   }
 }
 
-async function logoutAdmin() {
-  await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
+async function logoutAdmin(options = {}) {
+  const { reason = "", suppressNetworkErrors = false } = options;
+  try {
+    await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
+  } catch (error) {
+    if (!suppressNetworkErrors) {
+      throw error;
+    }
+  }
+  clearBrowserSessionMarker();
   showAuth();
+  if (reason) {
+    setStatus(reason, "error");
+  }
 }
 
 async function handleAdminAction(event) {
@@ -265,6 +332,7 @@ adminLogoutButtonEl.addEventListener("click", () => logoutAdmin().catch((error) 
 adminRolesTableEl.addEventListener("click", (event) => {
   handleAdminAction(event).catch((error) => setStatus(error.message, "error"));
 });
+window.setInterval(heartbeatAdminSession, ADMIN_SESSION_HEARTBEAT_MS);
 
 (async () => {
   try {

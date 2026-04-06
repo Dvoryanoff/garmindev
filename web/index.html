@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Garmin Swim Dashboard</title>
-  <link rel="stylesheet" href="/style.css?v=20260404k">
+  <link rel="stylesheet" href="/style.css?v=20260404m">
 </head>
 <body>
   <main class="page">
@@ -93,23 +93,32 @@
       </section>
 
       <section id="dashboardContent" hidden>
-      <section class="panel upload-panel">
-        <div class="panel-header">
-          <h2>Загрузка FIT-файлов</h2>
-        </div>
-        <div class="upload-grid">
-          <div class="upload-picker">
-            <div class="upload-actions">
-              <button id="pickFilesButton" type="button" class="secondary">Выбрать файлы</button>
-              <button id="pickFolderButton" type="button" class="secondary">Выбрать папку</button>
-            </div>
-            <div id="uploadSelection" class="upload-selection">Файлы не выбраны</div>
-            <input id="uploadInput" type="file" accept=".fit" multiple hidden>
-            <input id="uploadFolderInput" type="file" accept=".fit" webkitdirectory directory multiple hidden>
+      <section class="upload-status-layout">
+        <section class="panel upload-panel">
+          <div class="panel-header">
+            <h2>Загрузка FIT-файлов</h2>
           </div>
-          <button id="uploadButton">Загрузить и обработать</button>
-        </div>
-        <div id="uploadHint" class="control-note">Старые файлы будут проигнорированы по hash, новые тренировки попадут в базу пользователя. Можно загружать и папкой.</div>
+          <div class="upload-grid">
+            <div class="upload-picker">
+              <div class="upload-actions">
+                <button id="pickFilesButton" type="button" class="secondary">Выбрать файлы</button>
+                <button id="pickFolderButton" type="button" class="secondary">Выбрать папку</button>
+              </div>
+              <div id="uploadSelection" class="upload-selection">Файлы не выбраны</div>
+              <input id="uploadInput" type="file" accept=".fit" multiple hidden>
+              <input id="uploadFolderInput" type="file" accept=".fit" webkitdirectory directory multiple hidden>
+            </div>
+            <button id="uploadButton">Загрузить и обработать</button>
+          </div>
+          <div id="uploadHint" class="control-note">Старые файлы будут проигнорированы по hash, новые тренировки попадут в базу пользователя. Можно загружать и папкой.</div>
+        </section>
+
+        <article class="panel status-panel">
+          <div class="panel-header">
+            <h2>Статус данных</h2>
+          </div>
+          <div id="metaBox" class="meta-box"></div>
+        </article>
       </section>
 
       <section class="controls controls-primary">
@@ -175,7 +184,6 @@
       </section>
 
       <section class="metrics" id="metrics"></section>
-      <section id="runtimeBanner" class="runtime-banner is-hidden"></section>
 
       <section class="panel">
         <div class="panel-header">
@@ -226,13 +234,6 @@
             </table>
           </div>
         </article>
-
-        <article class="panel">
-          <div class="panel-header">
-            <h2>Статус данных</h2>
-          </div>
-          <div id="metaBox" class="meta-box"></div>
-        </article>
       </section>
 
       <section class="panel">
@@ -255,6 +256,6 @@
       </section>
     </section>
   </main>
-  <script src="/app.js?v=20260404k"></script>
+  <script src="/app.js?v=20260404m"></script>
 </body>
 </html>

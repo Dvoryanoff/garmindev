@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -21,6 +22,10 @@ except ModuleNotFoundError:  # pragma: no cover
     psycopg2 = None
 
 
+_INITIALIZED_DATABASES: set[str] = set()
+_INITIALIZED_DATABASES_LOCK = threading.Lock()
+
+
 def _json_default(value):
     if isinstance(value, datetime):
         return value.isoformat(sep=" ")
@@ -35,9 +40,11 @@ def json_dumps(payload: object) -> str:
     return json.dumps(payload, ensure_ascii=False, default=_json_default)
 
 
-def json_loads(payload: str | None):
+def json_loads(payload):
     if not payload:
         return None
+    if isinstance(payload, (dict, list)):
+        return payload
     return json.loads(payload)
 
 
@@ -149,6 +156,15 @@ class Database:
         return bool(row)
 
     def init_schema(self):
+        if self.url in _INITIALIZED_DATABASES:
+            return
+        with _INITIALIZED_DATABASES_LOCK:
+            if self.url in _INITIALIZED_DATABASES:
+                return
+            self._init_schema_impl()
+            _INITIALIZED_DATABASES.add(self.url)
+
+    def _init_schema_impl(self):
         with self.transaction() as conn:
             is_postgres = self.config.backend == "postgres"
             id_pk = "BIGSERIAL PRIMARY KEY" if is_postgres else "INTEGER PRIMARY KEY AUTOINCREMENT"
@@ -179,7 +195,9 @@ class Database:
                     account_id {bigint} NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
                     session_token TEXT NOT NULL UNIQUE,
                     created_at TEXT NOT NULL DEFAULT '',
-                    expires_at TEXT NOT NULL DEFAULT ''
+                    expires_at TEXT NOT NULL DEFAULT '',
+                    last_seen_at TEXT NOT NULL DEFAULT '',
+                    login_day TEXT NOT NULL DEFAULT ''
                 )
                 """,
             ).close()
@@ -354,6 +372,10 @@ class Database:
             ).close()
 
             legacy_columns = {
+                "user_sessions": {
+                    "last_seen_at": "TEXT NOT NULL DEFAULT ''",
+                    "login_day": "TEXT NOT NULL DEFAULT ''",
+                },
                 "source_files": {
                     "owner_account_id": f"{bigint} REFERENCES accounts(id) ON DELETE CASCADE",
                     "original_file_name": "TEXT NOT NULL DEFAULT ''",
@@ -472,14 +494,24 @@ class Database:
             (timestamp, account_id),
         ).close()
 
-    def create_session(self, conn, account_id: int, token: str, created_at: str, expires_at: str) -> None:
+    def create_session(
+        self,
+        conn,
+        account_id: int,
+        token: str,
+        created_at: str,
+        expires_at: str,
+        *,
+        last_seen_at: str | None = None,
+        login_day: str | None = None,
+    ) -> None:
         self.execute(
             conn,
             """
-            INSERT INTO user_sessions (account_id, session_token, created_at, expires_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO user_sessions (account_id, session_token, created_at, expires_at, last_seen_at, login_day)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (account_id, token, created_at, expires_at),
+            (account_id, token, created_at, expires_at, last_seen_at or created_at, login_day or created_at[:10]),
         ).close()
 
     def delete_session(self, conn, token: str) -> None:
@@ -487,6 +519,23 @@ class Database:
 
     def delete_expired_sessions(self, conn, now_text: str) -> None:
         self.execute(conn, "DELETE FROM user_sessions WHERE expires_at <> '' AND expires_at < ?", (now_text,)).close()
+
+    def delete_idle_sessions(self, conn, idle_cutoff: str) -> None:
+        self.execute(
+            conn,
+            """
+            DELETE FROM user_sessions
+            WHERE COALESCE(last_seen_at, '') <> '' AND last_seen_at < ?
+            """,
+            (idle_cutoff,),
+        ).close()
+
+    def touch_session(self, conn, token: str, last_seen_at: str) -> None:
+        self.execute(
+            conn,
+            "UPDATE user_sessions SET last_seen_at = ? WHERE session_token = ?",
+            (last_seen_at, token),
+        ).close()
 
     def find_account_by_session(self, conn, token: str, now_text: str) -> dict | None:
         self.delete_expired_sessions(conn, now_text)
@@ -501,7 +550,11 @@ class Database:
                 accounts.role,
                 accounts.is_active,
                 accounts.created_at,
-                accounts.last_login_at
+                accounts.last_login_at,
+                user_sessions.created_at AS session_created_at,
+                user_sessions.expires_at AS session_expires_at,
+                user_sessions.last_seen_at AS session_last_seen_at,
+                user_sessions.login_day AS session_login_day
             FROM user_sessions
             INNER JOIN accounts ON accounts.id = user_sessions.account_id
             WHERE user_sessions.session_token = ?
@@ -1140,6 +1193,18 @@ class Database:
             "SELECT COUNT(*) AS total_rows FROM intervals WHERE owner_account_id = ?",
             (owner_account_id,),
         ) or {}
+        activities = self.fetchone(
+            conn,
+            """
+            SELECT
+                COUNT(*) AS total_activities,
+                MIN(NULLIF(activity_date, '')) AS first_activity_date,
+                MAX(NULLIF(activity_date, '')) AS last_activity_date
+            FROM activities
+            WHERE owner_account_id = ?
+            """,
+            (owner_account_id,),
+        ) or {}
         return {
             "total_files": int(files.get("total_files") or 0),
             "ready_files": int(files.get("ready_files") or 0),
@@ -1147,6 +1212,9 @@ class Database:
             "error_files": int(files.get("error_files") or 0),
             "duplicate_files": int(files.get("duplicate_files") or 0),
             "total_rows": int(intervals.get("total_rows") or 0),
+            "total_activities": int(activities.get("total_activities") or 0),
+            "first_activity_date": str(activities.get("first_activity_date") or "")[:10],
+            "last_activity_date": str(activities.get("last_activity_date") or "")[:10],
         }
 
     def upsert_monthly_best(self, conn, *, owner_account_id: int, year: int, month: int, distance_m: int, best_pace_s: float, best_pace_text: str) -> None:

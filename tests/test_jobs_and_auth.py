@@ -4,14 +4,18 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from garmin_dashboard.core.auth import hash_password
+from garmin_dashboard.core.auth import hash_password, session_expiry
 from garmin_dashboard.core.config import RuntimeConfig
-from garmin_dashboard.core.db import Database
+from garmin_dashboard.core.db import Database, json_loads
 from garmin_dashboard.core.db_ingest import load_monthly_history
 from garmin_dashboard.core.jobs import process_job
 
 
 class JobsAndAuthTestCase(unittest.TestCase):
+    def test_json_loads_accepts_already_decoded_json(self):
+        payload = {"files": [{"name": "sample.fit"}]}
+        self.assertEqual(json_loads(payload), payload)
+
     def test_background_ingest_compacts_payload_and_queues_monthly_history(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -123,6 +127,45 @@ class JobsAndAuthTestCase(unittest.TestCase):
                     attempted_after="2026-04-04T17:59:00",
                 )
             self.assertEqual(failures, 2)
+
+    def test_session_stores_login_day_and_expires_after_idle_timeout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = RuntimeConfig(
+                database_url=f"sqlite:///{root / 'garmin_dashboard.sqlite'}",
+                upload_dir=root / "uploads",
+                db_auto_ingest=False,
+            )
+            db = Database(runtime.database_url)
+            db.init_schema()
+            with db.transaction() as conn:
+                account_id = db.create_account(
+                    conn,
+                    email="idle@example.com",
+                    password_hash=hash_password("password123"),
+                    first_name="Idle",
+                    last_name="User",
+                    role="user",
+                    created_at="2026-04-04 10:00:00",
+                )
+                token = "session-token"
+                db.create_session(
+                    conn,
+                    account_id,
+                    token,
+                    "2026-04-04 10:00:00",
+                    session_expiry(),
+                    last_seen_at="2026-04-04 10:00:00",
+                    login_day="2026-04-04",
+                )
+                session = db.find_account_by_session(conn, token, "2026-04-04 10:05:00")
+                self.assertIsNotNone(session)
+                self.assertEqual(session["session_login_day"], "2026-04-04")
+                self.assertEqual(session["session_last_seen_at"], "2026-04-04 10:00:00")
+
+                db.delete_idle_sessions(conn, "2026-04-04 12:01:00")
+                expired = db.find_account_by_session(conn, token, "2026-04-04 12:01:01")
+                self.assertIsNone(expired)
 
 
 if __name__ == "__main__":

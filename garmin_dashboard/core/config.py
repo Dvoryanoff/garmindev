@@ -37,6 +37,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{PROJECT_ROOT / 'garmin_das
 DB_AUTO_INGEST = os.getenv("GARMIN_DB_AUTO_INGEST", "1").strip().lower() not in {"0", "false", "no", "off"}
 UPLOAD_DIR = _env_path("GARMIN_UPLOAD_DIR", PROJECT_ROOT / "uploads")
 SESSION_TTL_DAYS = _env_int("GARMIN_SESSION_TTL_DAYS", 30)
+SESSION_IDLE_TIMEOUT_MINUTES = _env_int("GARMIN_SESSION_IDLE_TIMEOUT_MINUTES", 120)
 BOOTSTRAP_ADMIN_EMAIL = os.getenv("GARMIN_BOOTSTRAP_ADMIN_EMAIL", "dvoryanoff@mail.ru").strip().lower()
 DEMO_USER_PASSWORD = os.getenv("GARMIN_DEMO_USER_PASSWORD", "demo-demo").strip() or "demo-demo"
 UPLOAD_MAX_FILES = _env_int("GARMIN_UPLOAD_MAX_FILES", 500)

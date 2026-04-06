@@ -20,6 +20,7 @@ from garmin_dashboard.core.config import (
     PROJECT_ROOT,
     ReportRequest,
     RuntimeConfig,
+    SESSION_IDLE_TIMEOUT_MINUTES,
     SESSION_TTL_DAYS,
     UPLOAD_MAX_BATCH_BYTES,
     UPLOAD_MAX_FILE_BYTES,
@@ -37,6 +38,59 @@ WEB_ROOT = PROJECT_ROOT / "web"
 
 def iso_now() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+
+def serialize_job_for_api(job: dict | None) -> dict | None:
+    if not job:
+        return None
+    serialized = dict(job)
+    payload = serialized.get("payload_json")
+    if isinstance(payload, dict):
+        files = list(payload.get("files") or [])
+        serialized["payload_json"] = {
+            "files_count": len(files),
+            "has_content": any("content_hex" in file_item for file_item in files),
+            "timings": payload.get("timings") or {},
+        }
+    else:
+        serialized["payload_json"] = {}
+    return serialized
+
+
+def build_job_status_message(job: dict | None) -> str:
+    if not job:
+        return ""
+    stage = str(job.get("stage") or job.get("status") or "queued")
+    status = str(job.get("status") or "queued")
+    labels = {
+        "queued": "ожидает старта",
+        "ingest": "обрабатывает файлы",
+        "monthly_history": "обновляет помесячную историю",
+        "done": "завершён",
+        "failed": "завершён с ошибкой",
+    }
+    processed = int(job.get("processed_files") or 0)
+    skipped = int(job.get("skipped_files") or 0)
+    duplicates = int(job.get("duplicate_files") or 0)
+    errors = int(job.get("error_files") or 0)
+    total_files = int(job.get("total_files") or 0)
+    parts = [
+        f"Job #{job['id']}: {labels.get(stage, stage)}",
+        f"{int(job.get('progress_percent') or 0)}%",
+    ]
+    if status == "queued" and not job.get("started_at"):
+        parts.append("worker ещё не стартовал")
+    if total_files > 0:
+        parts.append(f"в job файлов: {total_files}")
+    parts.extend(
+        [
+            f"обработано {processed}",
+            f"пропущено {skipped}",
+            f"дубликаты {duplicates}",
+            f"ошибки {errors}",
+        ]
+    )
+    return " • ".join(parts)
 
 
 def build_request_from_params(params: dict, owner_account_id: int) -> ReportRequest:
@@ -156,8 +210,15 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
         token = cookie.get("garmin_session")
         if not token or not token.value:
             return None
+        now_text = iso_now()
+        idle_cutoff = (datetime.fromisoformat(now_text) - timedelta(minutes=SESSION_IDLE_TIMEOUT_MINUTES)).isoformat(timespec="seconds")
         with self.db.transaction() as conn:
-            return self.db.find_account_by_session(conn, token.value, iso_now())
+            self.db.delete_idle_sessions(conn, idle_cutoff)
+            account = self.db.find_account_by_session(conn, token.value, now_text)
+            if account:
+                self.db.touch_session(conn, token.value, now_text)
+                account["session_last_seen_at"] = now_text
+            return account
 
     def require_account(self) -> dict:
         account = self.current_account()
@@ -208,6 +269,13 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             "preferences": prefs,
             "dataset_meta": meta,
             "is_admin": account.get("role") == "admin",
+            "session": {
+                "created_at": account.get("session_created_at", ""),
+                "expires_at": account.get("session_expires_at", ""),
+                "last_seen_at": account.get("session_last_seen_at", ""),
+                "login_day": account.get("session_login_day", ""),
+                "idle_timeout_minutes": SESSION_IDLE_TIMEOUT_MINUTES,
+            },
         })
 
     def handle_register(self):
@@ -279,7 +347,15 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                 return
             token = new_session_token()
             now_text = iso_now()
-            self.db.create_session(conn, int(account["id"]), token, now_text, session_expiry())
+            self.db.create_session(
+                conn,
+                int(account["id"]),
+                token,
+                now_text,
+                session_expiry(),
+                last_seen_at=now_text,
+                login_day=now_text[:10],
+            )
             self.db.update_last_login(conn, int(account["id"]), now_text)
             self.db.record_login_attempt(conn, email=email, attempted_at=now_text, was_success=True)
             self.db.append_audit_log(
@@ -433,7 +509,7 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             account = self.require_account()
             with self.db.transaction() as conn:
                 jobs = self.db.list_background_jobs(conn, int(account["id"]))
-            self.send_json({"jobs": jobs})
+            self.send_json({"jobs": [serialize_job_for_api(job) for job in jobs]})
         except PermissionError as exc:
             self.send_json({"error": str(exc)}, status=HTTPStatus.UNAUTHORIZED)
 
@@ -446,7 +522,7 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             if not job or int(job.get("owner_account_id") or 0) != int(account["id"]):
                 self.send_json({"error": "Job не найден"}, status=HTTPStatus.NOT_FOUND)
                 return
-            self.send_json({"job": job})
+            self.send_json({"job": serialize_job_for_api(job)})
         except PermissionError as exc:
             self.send_json({"error": str(exc)}, status=HTTPStatus.UNAUTHORIZED)
         except Exception as exc:
@@ -485,11 +561,9 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
         if not active_job:
             self.send_json({"monthly_processing": False, "monthly_message": ""})
             return
-        stage = str(active_job.get("stage") or active_job.get("status") or "queued")
-        status = str(active_job.get("status") or "queued")
         self.send_json({
             "monthly_processing": True,
-            "monthly_message": f"Job #{active_job['id']}: {stage} ({status}), {active_job.get('progress_percent') or 0}%",
+            "monthly_message": build_job_status_message(active_job),
         })
 
     def handle_admin_users(self):
