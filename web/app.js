@@ -319,7 +319,7 @@ function renderMetrics(overview, filters) {
 
 function renderSummary(rows) {
   if (!rows.length) {
-    summaryTableEl.innerHTML = `<tr><td colspan="8">Нет данных для выбранных фильтров.</td></tr>`;
+    summaryTableEl.innerHTML = `<tr><td colspan="9">Нет данных для выбранных фильтров.</td></tr>`;
     return;
   }
   summaryTableEl.innerHTML = rows.map((row) => `
@@ -332,6 +332,7 @@ function renderSummary(rows) {
       <td>${escapeHtml(row.best_pace_date)}</td>
       <td>${escapeHtml(row.avg_pace_100m)}</td>
       <td>${escapeHtml(row.middle_pace_100m)} <span class="muted">(${escapeHtml(row.middle_count)})</span></td>
+      <td>${escapeHtml(row.avg_rest || "—")}</td>
     </tr>
   `).join("");
 }
@@ -345,9 +346,11 @@ function renderWorkouts(rows) {
         <td>${escapeHtml(row.total_distance_m)} м</td>
         <td>${escapeHtml(row.total_time)}</td>
         <td>${escapeHtml(row.best_pace_100m)}</td>
+        <td>${escapeHtml(row.avg_rest || "—")}</td>
+        <td>${escapeHtml(row.long_rest_count ?? 0)}</td>
       </tr>
     `).join("")
-    : `<tr><td colspan="4">Тренировки не найдены.</td></tr>`;
+    : `<tr><td colspan="6">Тренировки не найдены.</td></tr>`;
 }
 
 function renderMeta(meta) {
@@ -428,7 +431,7 @@ function renderMonthlyHistory(payload) {
 function renderMonthlyHistoryYear(year) {
   const headers = monthlyHistoryState.headers;
   const rows = monthlyHistoryState.rows.filter((row) => Number(row.year) === Number(year));
-  monthlyHeaderRowEl.innerHTML = `<th>Месяц</th>${headers.map((distance) => `<th>${escapeHtml(distance)} м</th>`).join("")}`;
+  monthlyHeaderRowEl.innerHTML = `<th>Месяц</th>${headers.map((distance) => `<th>${escapeHtml(distance)} м</th>`).join("")}<th>Средний отдых</th>`;
   monthlyTableBodyEl.innerHTML = rows.length
     ? rows.map((row) => `
       <tr>
@@ -440,9 +443,10 @@ function renderMonthlyHistoryYear(year) {
             </span>
           </td>
         `).join("")}
+        <td>${escapeHtml(row.avg_rest || "—")}</td>
       </tr>
     `).join("")
-    : `<tr><td colspan="${headers.length + 1}">Пока нет monthly history.</td></tr>`;
+    : `<tr><td colspan="${headers.length + 2}">Пока нет monthly history.</td></tr>`;
 }
 
 async function refreshRuntimeStatus() {

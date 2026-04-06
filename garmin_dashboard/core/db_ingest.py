@@ -288,7 +288,34 @@ def load_report_rows(runtime_config: RuntimeConfig, owner_account_id: int, swim_
 
 
 def load_monthly_history(runtime_config: RuntimeConfig, owner_account_id: int) -> list[dict]:
+    from .monthly_history import build_monthly_entries
+    from .rest_metrics import compute_monthly_avg_rest_from_payloads
+
+    rows, _ = load_report_rows(
+        runtime_config=RuntimeConfig(
+            fit_dir=runtime_config.fit_dir,
+            detail_csv=runtime_config.detail_csv,
+            summary_csv=runtime_config.summary_csv,
+            cache_file=runtime_config.cache_file,
+            database_url=runtime_config.database_url,
+            db_auto_ingest=False,
+            upload_dir=runtime_config.upload_dir,
+            max_workers=runtime_config.max_workers,
+            batch_size=runtime_config.batch_size,
+        ),
+        owner_account_id=owner_account_id,
+        swim_mode="all",
+        start_date="",
+        end_date="",
+    )
     db = Database(runtime_config.database_url)
     db.init_schema()
+    activity_keys = sorted({str(row.get("activity_key") or "") for row in rows if row.get("activity_key")})
+    payloads = []
     with db.transaction() as conn:
-        return db.fetch_monthly_history(conn, owner_account_id)
+        for activity_key in activity_keys:
+            payload = db.fetch_activity_payload_by_key(conn, owner_account_id, activity_key)
+            if payload:
+                payloads.append(payload)
+    month_rest_by_key = compute_monthly_avg_rest_from_payloads(payloads)
+    return build_monthly_entries(rows, month_rest_by_key=month_rest_by_key)

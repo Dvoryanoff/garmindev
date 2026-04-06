@@ -1017,6 +1017,32 @@ class Database:
             (owner_account_id, scoped_key, activity_key),
         )
 
+    def fetch_activity_payload_by_key(self, conn, owner_account_id: int | None, activity_key: str):
+        if owner_account_id is None:
+            row = self.fetchone(
+                conn,
+                """
+                SELECT ap.raw_json
+                FROM activity_payloads ap
+                INNER JOIN activities a ON a.id = ap.activity_id
+                WHERE a.activity_key = ?
+                """,
+                (activity_key,),
+            )
+            return json_loads(row.get("raw_json")) if row else None
+        scoped_key = self.db_activity_key(owner_account_id, activity_key)
+        row = self.fetchone(
+            conn,
+            """
+            SELECT ap.raw_json
+            FROM activity_payloads ap
+            INNER JOIN activities a ON a.id = ap.activity_id
+            WHERE a.owner_account_id = ? AND a.activity_key IN (?, ?)
+            """,
+            (owner_account_id, scoped_key, activity_key),
+        )
+        return json_loads(row.get("raw_json")) if row else None
+
     def replace_activity(
         self,
         conn,

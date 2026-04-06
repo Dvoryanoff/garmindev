@@ -408,13 +408,13 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             params = urllib.parse.parse_qs(query)
             report = build_report(build_request_from_params(params, owner_account_id=int(account["id"])))
             if kind == "summary":
-                headers = ["Дистанция", "Отрезков", "Среднее время", "Лучшее время", "Лучший темп", "Дата лучшего", "Средний темп", "Middle темп"]
-                rows = [[f"{row['distance_m']} м", row["count"], row["avg_time"], row["best_time"], row["best_pace_100m"], row["best_pace_date"], row["avg_pace_100m"], row["middle_pace_100m"]] for row in report["summary"]]
+                headers = ["Дистанция", "Отрезков", "Среднее время", "Лучшее время", "Лучший темп", "Дата лучшего", "Средний темп", "Middle темп", "Средний отдых"]
+                rows = [[f"{row['distance_m']} м", row["count"], row["avg_time"], row["best_time"], row["best_pace_100m"], row["best_pace_date"], row["avg_pace_100m"], row["middle_pace_100m"], row.get("avg_rest") or "—"] for row in report["summary"]]
                 sheet_name = "Сводка по дистанциям"
                 filename = "summary.xlsx"
             else:
-                headers = ["Дата", "Общее расстояние", "Время", "Лучший темп"]
-                rows = [[row["date"], f"{row['total_distance_m']} м", row["total_time"], row["best_pace_100m"]] for row in report["workouts"]]
+                headers = ["Дата", "Общее расстояние", "Время", "Лучший темп", "Средний отдых", "Паузы > 2 мин"]
+                rows = [[row["date"], f"{row['total_distance_m']} м", row["total_time"], row["best_pace_100m"], row.get("avg_rest") or "—", row.get("long_rest_count") or 0] for row in report["workouts"]]
                 sheet_name = "Тренировки"
                 filename = "workouts.xlsx"
             from garmin_dashboard.core.xlsx_export import build_workbook_bytes

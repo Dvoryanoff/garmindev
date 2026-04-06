@@ -29,7 +29,7 @@ class MonthlyHistoryTestCase(unittest.TestCase):
             },
         ]
 
-        monthly_rows = build_monthly_entries(rows)
+        monthly_rows = build_monthly_entries(rows, month_rest_by_key={(2024, 4): 20.0})
         self.assertEqual([row["date"] for row in monthly_rows], ["Январь 2024", "Февраль 2024", "Март 2024"])
         self.assertEqual(monthly_rows[1][100], "")
 
@@ -80,6 +80,31 @@ class MonthlyHistoryTestCase(unittest.TestCase):
         monthly_rows = build_monthly_entries(rows)
         self.assertEqual(monthly_rows[0]["date"], "Апрель 2021")
         self.assertEqual(monthly_rows[0][100], "1:21.0")
+
+    def test_build_monthly_entries_includes_average_rest(self):
+        rows = [
+            {
+                "activity_key": "a1",
+                "activity_date": "2024-04-02 08:00:00",
+                "lap_start": "2024-04-02 08:00:00",
+                "lap_end": "2024-04-02 08:00:40",
+                "distance_m": 50,
+                "time_s": 40,
+                "stroke": "freestyle",
+            },
+            {
+                "activity_key": "a1",
+                "activity_date": "2024-04-02 08:00:00",
+                "lap_start": "2024-04-02 08:01:00",
+                "lap_end": "2024-04-02 08:01:42",
+                "distance_m": 50,
+                "time_s": 42,
+                "stroke": "backstroke",
+            },
+        ]
+
+        monthly_rows = build_monthly_entries(rows, month_rest_by_key={(2024, 4): 20.0})
+        self.assertEqual(monthly_rows[0]["avg_rest"], "0:20")
 
     def test_dedupe_workouts_keeps_unique_activity_keys(self):
         workouts = {

@@ -3,9 +3,18 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 
 from garmin_dashboard.core.config import RESOURCES_DIR, ReportRequest
+from garmin_dashboard.core.db import Database
 from garmin_dashboard.core.dataset import write_detail_csv, write_summary_csv
 from garmin_dashboard.core.db_ingest import load_report_rows
 from garmin_dashboard.core.fit_parser import summary_distance
+from garmin_dashboard.core.rest_metrics import (
+    collect_adjacent_rest_values,
+    compute_summary_rest_by_distance_from_payloads,
+    compute_workout_rest_stats_from_payloads,
+    format_rest,
+    mean_seconds,
+    sorted_rows,
+)
 from garmin_dashboard.core.utils import format_duration, norm, pace_str, pace_str_precise, to_datetime
 
 
@@ -135,10 +144,11 @@ def middle_half_rows(rows: list[dict]) -> list[dict]:
     return middle_rows or sorted_rows
 
 
-def build_summary(rows: list[dict]) -> list[dict]:
+def build_summary(rows: list[dict], *, include_pool_rest: bool = False, rest_by_distance: dict[int, float | None] | None = None) -> list[dict]:
     groups = defaultdict(list)
     for row in rows:
         groups[row["distance_m"]].append(row)
+    rest_by_distance = rest_by_distance or {}
 
     summary = []
     for distance in sorted(groups):
@@ -183,6 +193,8 @@ def build_summary(rows: list[dict]) -> list[dict]:
             "middle_count": middle_count,
             "middle_pace_100m_s": round(middle_pace, 2),
             "middle_pace_100m": pace_str_precise(middle_pace),
+            "avg_rest_s": rest_by_distance.get(distance),
+            "avg_rest": format_rest(rest_by_distance.get(distance)) if include_pool_rest else "",
             "swim_types": ", ".join(swim_types),
             "strokes": ", ".join(strokes),
         })
@@ -208,11 +220,12 @@ def add_summary_columns_to_details(rows: list[dict], summary_rows: list[dict]) -
     return enriched
 
 
-def build_workout_groups(rows: list[dict]) -> list[dict]:
+def build_workout_groups(rows: list[dict], *, rest_by_activity: dict[str, dict] | None = None) -> list[dict]:
     groups = defaultdict(list)
     for row in rows:
         workout_key = row.get("activity_key") or row.get("activity_date", "")[:10] or row.get("lap_start", "")[:10] or "unknown"
         groups[workout_key].append(row)
+    rest_by_activity = rest_by_activity or {}
 
     workouts = []
     def workout_sort_key(group: list[dict]) -> str:
@@ -221,20 +234,34 @@ def build_workout_groups(rows: list[dict]) -> list[dict]:
 
     sorted_groups = sorted(groups.values(), key=workout_sort_key, reverse=True)
     for group in sorted_groups:
-        sample = group[0]
+        ordered_group = sorted_rows(group)
+        sample = ordered_group[0]
         workout_date = (sample.get("activity_date", "") or sample.get("lap_start", "") or "unknown")[:10]
-        total_distance = max((float(r.get("workout_total_distance_m", 0) or 0) for r in group), default=0.0)
-        total_time = max((float(r.get("workout_total_time_s", 0) or 0) for r in group), default=0.0)
-        best_pace = min((r["pace_100m_s"] for r in group), default=0.0)
-        swim_types = sorted({r["swim_type"] for r in group if r.get("swim_type")})
+        total_distance = max((float(r.get("workout_total_distance_m", 0) or 0) for r in ordered_group), default=0.0)
+        total_time = max((float(r.get("workout_total_time_s", 0) or 0) for r in ordered_group), default=0.0)
+        best_pace = min((r["pace_100m_s"] for r in ordered_group), default=0.0)
+        swim_types = sorted({r["swim_type"] for r in ordered_group if r.get("swim_type")})
+        rest_stats = rest_by_activity.get(str(sample.get("activity_key") or ""), {}) if rest_by_activity else {}
+        avg_rest_s = rest_stats.get("avg_rest_s")
+        long_rest_count = int(rest_stats.get("long_rest_count") or 0)
+        if avg_rest_s is None:
+            avg_rest_s = mean_seconds(
+                collect_adjacent_rest_values(
+                    ordered_group,
+                    lambda previous_row, next_row: True,
+                )
+            )
         workouts.append({
             "date": workout_date,
-            "intervals": len(group),
+            "intervals": len(ordered_group),
             "total_distance_m": round(total_distance, 2),
             "total_time_s": round(total_time, 2),
             "total_time": format_duration(total_time),
             "best_pace_100m_s": round(best_pace, 2),
             "best_pace_100m": pace_str(best_pace) if best_pace else "",
+            "avg_rest_s": avg_rest_s,
+            "avg_rest": format_rest(avg_rest_s),
+            "long_rest_count": long_rest_count,
             "swim_types": ", ".join(swim_types),
         })
     return workouts
@@ -259,9 +286,31 @@ def build_report(request: ReportRequest) -> dict:
     filtered_rows = [row for row in filtered_rows if row_matches_requested_distance_group(row, request)]
     filtered_rows.sort(key=lambda r: (r["activity_date"], r["lap_start"], r["file_name"]))
 
-    summary_rows = build_summary(filtered_rows) if filtered_rows else []
+    payloads_by_activity: dict[str, dict] = {}
+    if filtered_rows:
+        activity_keys = sorted({str(row.get("activity_key") or "") for row in filtered_rows if row.get("activity_key")})
+        db = Database(request.runtime_config.database_url)
+        db.init_schema()
+        with db.transaction() as conn:
+            for activity_key in activity_keys:
+                payload = db.fetch_activity_payload_by_key(conn, request.owner_account_id, activity_key)
+                if payload:
+                    payloads_by_activity[activity_key] = payload
+
+    summary_rest_by_distance = (
+        compute_summary_rest_by_distance_from_payloads(list(payloads_by_activity.values()), request.interval_config)
+        if filtered_rows and request.swim_mode == "pool"
+        else {}
+    )
+    workout_rest_by_activity = compute_workout_rest_stats_from_payloads(payloads_by_activity) if payloads_by_activity else {}
+
+    summary_rows = build_summary(
+        filtered_rows,
+        include_pool_rest=request.swim_mode == "pool",
+        rest_by_distance=summary_rest_by_distance,
+    ) if filtered_rows else []
     detail_rows = add_summary_columns_to_details(filtered_rows, summary_rows) if filtered_rows else []
-    workouts = build_workout_groups(filtered_rows) if filtered_rows else []
+    workouts = build_workout_groups(filtered_rows, rest_by_activity=workout_rest_by_activity) if filtered_rows else []
 
     total_distance = sum(row["distance_m"] for row in filtered_rows)
     total_time = sum(row["time_s"] for row in filtered_rows)

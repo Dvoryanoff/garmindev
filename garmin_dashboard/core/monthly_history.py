@@ -10,6 +10,7 @@ from xml.sax.saxutils import escape
 from .config import CACHE_VERSION, MONTHLY_FIXED_DISTANCES, MONTHLY_HISTORY_DIR, RESOURCES_DIR, IntervalConfig, RuntimeConfig
 from .db_ingest import load_report_rows
 from .dataset import find_fit_files, process_batches
+from .rest_metrics import format_rest
 from .utils import pace_str_precise, to_datetime
 
 
@@ -35,6 +36,7 @@ MONTH_NAMES_RU = [
 STYLE_DEFAULT = 0
 STYLE_HEADER = 1
 STYLE_BEST_PACE = 2
+MONTHLY_REST_HEADER = "Средний отдых"
 
 
 def sanitize_user_slug(value: str) -> str:
@@ -163,9 +165,10 @@ def dedupe_workouts(workouts_state: dict) -> dict:
     return unique
 
 
-def build_monthly_entries(rows: list[dict]) -> list[dict]:
+def build_monthly_entries(rows: list[dict], month_rest_by_key: dict[tuple[int, int], float | None] | None = None) -> list[dict]:
     grouped = defaultdict(lambda: defaultdict(list))
     month_dates = []
+    month_rest_by_key = month_rest_by_key or {}
 
     for row in rows:
         month_start = row_month_start(row)
@@ -186,6 +189,7 @@ def build_monthly_entries(rows: list[dict]) -> list[dict]:
             "date": f"{MONTH_NAMES_RU[month_start.month]} {month_start.year}",
         }
         month_group = grouped.get(month_start, {})
+        avg_rest_s = month_rest_by_key.get((month_start.year, month_start.month))
         for distance in MONTHLY_FIXED_DISTANCES:
             times = month_group.get(distance, [])
             if times:
@@ -196,6 +200,8 @@ def build_monthly_entries(rows: list[dict]) -> list[dict]:
             else:
                 row[distance] = ""
                 row[f"{distance}_s"] = None
+        row["avg_rest"] = format_rest(avg_rest_s)
+        row["avg_rest_s"] = avg_rest_s
         entries.append(row)
     return entries
 
@@ -254,7 +260,7 @@ def write_workbook(entries: list[dict], target_path: Path) -> None:
     rows_by_year = defaultdict(list)
     header = [{"value": "Дата", "style": STYLE_HEADER}, *[
         {"value": str(distance), "style": STYLE_HEADER} for distance in MONTHLY_FIXED_DISTANCES
-    ]]
+    ], {"value": MONTHLY_REST_HEADER, "style": STYLE_HEADER}]
 
     for entry in entries:
         rows_by_year[entry["year"]].append(entry)
@@ -374,6 +380,7 @@ def write_workbook(entries: list[dict], target_path: Path) -> None:
                             "value": entry.get(distance, ""),
                             "style": STYLE_BEST_PACE if is_best else STYLE_DEFAULT,
                         })
+                    row.append({"value": entry.get("avg_rest", ""), "style": STYLE_DEFAULT})
                     sheet_rows.append(row)
                 zf.writestr(f"xl/worksheets/sheet{sheet_index}.xml", build_sheet_xml(sheet_rows))
         tmp_path = Path(fh.name)
@@ -566,6 +573,8 @@ def refresh_monthly_history_from_database(runtime_config: RuntimeConfig) -> dict
 
 
 def monthly_rows_to_entries(rows: list[dict]) -> list[dict]:
+    if rows and "date" in rows[0]:
+        return rows
     grouped: dict[tuple[int, int], dict] = {}
     for row in rows:
         year = int(row.get("year") or 0)
@@ -606,6 +615,7 @@ def build_monthly_history_payload(rows: list[dict]) -> dict:
                 "year": entry["year"],
                 "month": entry["date"].split(" ")[0],
                 "date": entry["date"],
+                "avg_rest": entry.get("avg_rest", ""),
                 "values": [
                     {
                         "text": entry.get(distance, ""),
