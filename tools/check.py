@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import compileall
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -17,10 +18,16 @@ def run_step(title: str, command: list[str]) -> None:
 
 
 def find_pytest_command() -> list[str]:
-    candidates = [
-        [sys.executable, "-m", "pytest"],
-        ["python3", "-m", "pytest"],
-    ]
+    candidates: list[list[str]] = [[sys.executable, "-m", "pytest"]]
+    python3_path = shutil.which("python3")
+    if python3_path:
+        candidates.append([python3_path, "-m", "pytest"])
+    pytest_path = shutil.which("pytest")
+    if pytest_path:
+        candidates.append([pytest_path])
+    pyenv_pytest = Path.home() / ".pyenv" / "shims" / "pytest"
+    if pyenv_pytest.exists():
+        candidates.append([str(pyenv_pytest)])
     for command in candidates:
         completed = subprocess.run(
             [*command, "--version"],
@@ -30,7 +37,7 @@ def find_pytest_command() -> list[str]:
         )
         if completed.returncode == 0:
             return command
-    raise SystemExit("pytest не найден ни в текущем интерпретаторе, ни в system python3")
+    raise SystemExit("pytest не найден ни в текущем интерпретаторе, ни среди доступных python3/pytest команд")
 
 
 def compile_python() -> None:
