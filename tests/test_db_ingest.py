@@ -11,6 +11,150 @@ from garmin_dashboard.core.db_ingest import ingest_uploaded_files
 
 
 class DatabaseIngestTestCase(unittest.TestCase):
+    def test_ingest_accepts_same_name_with_different_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_path = root / "garmin_dashboard.sqlite"
+            upload_dir = root / "uploads"
+            runtime = RuntimeConfig(
+                database_url=f"sqlite:///{db_path}",
+                upload_dir=upload_dir,
+                db_auto_ingest=False,
+            )
+            db = Database(runtime.database_url)
+            db.init_schema()
+            with db.transaction() as conn:
+                account_id = db.create_account(
+                    conn,
+                    email="dupname@example.com",
+                    password_hash=hash_password("password123"),
+                    first_name="Dup",
+                    last_name="Name",
+                    role="user",
+                    created_at="2026-04-04 10:00:00",
+                )
+
+            fixtures = [
+                {
+                    "status": "ready",
+                    "error_text": "",
+                    "activity_key": "act-1",
+                    "payload": {"messages": {"session_mesgs": [{"sport": "swimming"}]}},
+                    "activity": {
+                        "activity_key": "act-1",
+                        "activity_date": "2026-04-04 10:00:00",
+                        "garmin_user_id": "u1",
+                        "garmin_user_name": "Dup",
+                        "sport": "swimming",
+                        "sub_sport": "lap_swimming",
+                        "swim_type": "pool",
+                        "total_distance_m": 100.0,
+                        "total_time_s": 90.0,
+                    },
+                    "intervals": [{
+                        "file_name": "same.fit", "activity_key": "act-1", "activity_date": "2026-04-04 10:00:00",
+                        "user_id": "u1", "user_name": "Dup", "lap_start": "2026-04-04 10:00:00", "lap_end": "2026-04-04 10:01:30",
+                        "distance_m": 100, "raw_distance_m": 100.0, "time_s": 90.0, "time_text": "1:30",
+                        "workout_total_distance_m": 100.0, "workout_total_time_s": 90.0, "stroke": "freestyle", "swim_type": "pool",
+                        "pace_100m_s": 90.0, "pace_100m": "1:30/100m",
+                    }],
+                },
+                {
+                    "status": "ready",
+                    "error_text": "",
+                    "activity_key": "act-2",
+                    "payload": {"messages": {"session_mesgs": [{"sport": "swimming"}]}},
+                    "activity": {
+                        "activity_key": "act-2",
+                        "activity_date": "2026-04-05 10:00:00",
+                        "garmin_user_id": "u1",
+                        "garmin_user_name": "Dup",
+                        "sport": "swimming",
+                        "sub_sport": "lap_swimming",
+                        "swim_type": "pool",
+                        "total_distance_m": 200.0,
+                        "total_time_s": 180.0,
+                    },
+                    "intervals": [{
+                        "file_name": "same.fit", "activity_key": "act-2", "activity_date": "2026-04-05 10:00:00",
+                        "user_id": "u1", "user_name": "Dup", "lap_start": "2026-04-05 10:00:00", "lap_end": "2026-04-05 10:03:00",
+                        "distance_m": 200, "raw_distance_m": 200.0, "time_s": 180.0, "time_text": "3:00",
+                        "workout_total_distance_m": 200.0, "workout_total_time_s": 180.0, "stroke": "freestyle", "swim_type": "pool",
+                        "pace_100m_s": 90.0, "pace_100m": "1:30/100m",
+                    }],
+                },
+            ]
+
+            with patch("garmin_dashboard.core.db_ingest.parse_fit_file_to_activity", side_effect=fixtures):
+                meta = ingest_uploaded_files(runtime, account_id, [
+                    {"name": "same.fit", "content": b"fit-1"},
+                    {"name": "same.fit", "content": b"fit-2"},
+                ])
+
+            self.assertEqual(meta["processed_files"], 2)
+            with db.transaction() as conn:
+                files_count = db.fetchone(conn, "SELECT COUNT(*) AS c FROM source_files WHERE owner_account_id = ?", (account_id,))["c"]
+                activities_count = db.fetchone(conn, "SELECT COUNT(*) AS c FROM activities WHERE owner_account_id = ?", (account_id,))["c"]
+            self.assertEqual(files_count, 2)
+            self.assertEqual(activities_count, 2)
+
+    def test_ingest_skips_same_content_with_different_names_by_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_path = root / "garmin_dashboard.sqlite"
+            upload_dir = root / "uploads"
+            runtime = RuntimeConfig(
+                database_url=f"sqlite:///{db_path}",
+                upload_dir=upload_dir,
+                db_auto_ingest=False,
+            )
+            db = Database(runtime.database_url)
+            db.init_schema()
+            with db.transaction() as conn:
+                account_id = db.create_account(
+                    conn,
+                    email="duphash@example.com",
+                    password_hash=hash_password("password123"),
+                    first_name="Dup",
+                    last_name="Hash",
+                    role="user",
+                    created_at="2026-04-04 10:00:00",
+                )
+
+            parsed = {
+                "status": "ready",
+                "error_text": "",
+                "activity_key": "dup-hash-act",
+                "payload": {"messages": {"session_mesgs": [{"sport": "swimming"}]}},
+                "activity": {
+                    "activity_key": "dup-hash-act",
+                    "activity_date": "2026-04-04 10:00:00",
+                    "garmin_user_id": "u1",
+                    "garmin_user_name": "Dup",
+                    "sport": "swimming",
+                    "sub_sport": "lap_swimming",
+                    "swim_type": "pool",
+                    "total_distance_m": 100.0,
+                    "total_time_s": 90.0,
+                },
+                "intervals": [{
+                    "file_name": "a.fit", "activity_key": "dup-hash-act", "activity_date": "2026-04-04 10:00:00",
+                    "user_id": "u1", "user_name": "Dup", "lap_start": "2026-04-04 10:00:00", "lap_end": "2026-04-04 10:01:30",
+                    "distance_m": 100, "raw_distance_m": 100.0, "time_s": 90.0, "time_text": "1:30",
+                    "workout_total_distance_m": 100.0, "workout_total_time_s": 90.0, "stroke": "freestyle", "swim_type": "pool",
+                    "pace_100m_s": 90.0, "pace_100m": "1:30/100m",
+                }],
+            }
+
+            with patch("garmin_dashboard.core.db_ingest.parse_fit_file_to_activity", return_value=parsed):
+                meta = ingest_uploaded_files(runtime, account_id, [
+                    {"name": "a.fit", "content": b"same-fit"},
+                    {"name": "b.fit", "content": b"same-fit"},
+                ])
+
+            self.assertEqual(meta["processed_files"], 1)
+            self.assertEqual(meta["skipped_files"], 1)
+
     def test_build_report_reads_from_database_after_ingest(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

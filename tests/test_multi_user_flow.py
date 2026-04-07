@@ -222,10 +222,6 @@ class MultiUserFlowTestCase(unittest.TestCase):
             db.init_schema()
 
             with db.transaction() as conn:
-                for demo_email in ("demo.alpha@local", "demo.beta@local", "demo.gamma@local", "demo.delta@local"):
-                    demo = db.find_account_by_email(conn, demo_email)
-                    self.assertIsNotNone(demo)
-                    self.assertEqual(demo["role"], "user")
                 admin_id = db.create_account(
                     conn,
                     email="admin@example.com",
@@ -339,12 +335,12 @@ class MultiUserFlowTestCase(unittest.TestCase):
                 recent_logins = db.list_recent_logins(conn)
                 recent_uploads = db.list_recent_uploads(conn)
 
-            self.assertEqual(len(users), 6)
+            self.assertEqual(len(users), 2)
             self.assertEqual(int(admin_stats["files_count"]), 3)
             self.assertEqual(int(user_stats["files_count"]), 3)
             self.assertEqual(int(admin_stats["activities_count"]), 3)
             self.assertEqual(int(user_stats["activities_count"]), 3)
-            self.assertGreaterEqual(overview["total_users"], 6)
+            self.assertEqual(overview["total_users"], 2)
             self.assertEqual(overview["total_files"], 6)
             self.assertEqual(overview["total_activities"], 6)
             self.assertEqual(overview["total_intervals"], 6)

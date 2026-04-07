@@ -486,6 +486,19 @@ thead th {
   color: var(--accent-strong);
 }
 
+.admin-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 148px;
+}
+
+.admin-action-button {
+  width: 100%;
+  justify-content: center;
+}
+
 .muted {
   color: var(--muted);
 }

@@ -18,6 +18,7 @@ const adminAuditTableEl = document.querySelector("#adminAuditTable tbody");
 let adminLoginInFlight = false;
 const ADMIN_SESSION_HEARTBEAT_MS = 60 * 1000;
 const BROWSER_SESSION_DAY_KEY = "garmin_browser_session_day";
+let adminSessionState = null;
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -106,12 +107,17 @@ function renderAdminRoles(users) {
       <td>${Number(user.is_active) ? "active" : "disabled"}</td>
       <td>${escapeHtml(user.last_login_at || "—")}</td>
       <td>
-        <button class="small-button" data-action="toggle-role" data-id="${escapeHtml(user.id)}" data-role="${escapeHtml(user.role)}">
-          ${user.role === "admin" ? "Сделать user" : "Сделать admin"}
-        </button>
-        <button class="small-button secondary-button" data-action="toggle-active" data-id="${escapeHtml(user.id)}" data-active="${Number(user.is_active) ? "1" : "0"}">
-          ${Number(user.is_active) ? "Отключить" : "Включить"}
-        </button>
+        <div class="admin-actions">
+          <button class="small-button admin-action-button" data-action="toggle-role" data-id="${escapeHtml(user.id)}" data-role="${escapeHtml(user.role)}">
+            ${user.role === "admin" ? "Сделать user" : "Сделать admin"}
+          </button>
+          <button class="small-button secondary-button admin-action-button" data-action="toggle-active" data-id="${escapeHtml(user.id)}" data-active="${Number(user.is_active) ? "1" : "0"}">
+            ${Number(user.is_active) ? "Отключить" : "Включить"}
+          </button>
+          ${Number(user.id) === Number(adminSessionState?.account?.id)
+            ? ""
+            : `<button class="small-button secondary-button admin-action-button" data-action="delete-user" data-id="${escapeHtml(user.id)}" data-email="${escapeHtml(user.email)}">Удалить</button>`}
+        </div>
       </td>
     </tr>
   `).join("");
@@ -201,6 +207,7 @@ async function loadAdminOverview() {
 
 async function refreshAdminSession() {
   const session = await api(`/api/auth/session?_ts=${Date.now()}`);
+  adminSessionState = session;
   if (!session.authenticated) {
     clearBrowserSessionMarker();
     showAuth();
@@ -245,10 +252,12 @@ async function heartbeatAdminSession() {
     if (!session.authenticated) {
       throw Object.assign(new Error("Требуется вход"), { status: 401 });
     }
+    adminSessionState = session;
     markBrowserSessionActive();
   } catch (error) {
     if (error?.status === 401) {
       clearBrowserSessionMarker();
+      adminSessionState = null;
       showAuth();
       setStatus("Сессия завершилась. Войди снова.", "error");
     }
@@ -291,6 +300,7 @@ async function logoutAdmin(options = {}) {
     }
   }
   clearBrowserSessionMarker();
+  adminSessionState = null;
   showAuth();
   if (reason) {
     setStatus(reason, "error");
@@ -314,6 +324,23 @@ async function handleAdminAction(event) {
     const row = button.closest("tr");
     const roleButton = row.querySelector('[data-action="toggle-role"]');
     role = roleButton ? roleButton.dataset.role : "user";
+  }
+  if (action === "delete-user") {
+    const email = button.dataset.email || `ID ${accountId}`;
+    const confirmed = window.confirm(`Точно удалить пользователя ${email} и все его данные из базы?`);
+    if (!confirmed) {
+      return;
+    }
+    await api("/api/admin/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        account_id: accountId,
+        action: "delete",
+      }),
+    });
+    await Promise.all([loadAdminUsers(), loadAdminOverview()]);
+    return;
   }
   await api("/api/admin/users", {
     method: "POST",

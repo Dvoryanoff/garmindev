@@ -71,6 +71,7 @@ let activeUploadJobId = null;
 let activeUploadPollPromise = null;
 const MAX_FILES_PER_BATCH = 50;
 const MAX_BATCH_BYTES = 16 * 1024 * 1024;
+const MAX_TOTAL_UPLOAD_FILES = 100000;
 const SESSION_HEARTBEAT_MS = 60 * 1000;
 const BROWSER_SESSION_DAY_KEY = "garmin_browser_session_day";
 const DEFAULT_UPLOAD_HINT =
@@ -759,6 +760,12 @@ async function uploadFiles() {
     alert("Выбери хотя бы один FIT-файл или папку с FIT-файлами.");
     return;
   }
+  if (files.length > MAX_TOTAL_UPLOAD_FILES) {
+    const message = `Максимум можно обработать ${MAX_TOTAL_UPLOAD_FILES} файлов.`;
+    alert(message);
+    setUploadHint(message);
+    return;
+  }
   setUploadButtonsDisabled(true);
   try {
     const batches = buildUploadBatches(files);
@@ -884,6 +891,11 @@ function updateUploadSelection() {
     : "Файлы не выбраны";
   uploadSelectionEl.textContent = summary;
   uploadSelectionEmptyEl.textContent = summary;
+  if (fitCount > MAX_TOTAL_UPLOAD_FILES) {
+    setUploadHint(`Максимум можно обработать ${MAX_TOTAL_UPLOAD_FILES} файлов.`);
+  } else if (uploadHintEl.textContent.includes("Максимум можно обработать")) {
+    setUploadHint(DEFAULT_UPLOAD_HINT);
+  }
 }
 
 function resetOtherInputs(activeInput) {

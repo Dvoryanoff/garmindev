@@ -4,7 +4,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from garmin_dashboard.app.server import validate_upload_request
 from garmin_dashboard.core.auth import hash_password, session_expiry
+from garmin_dashboard.core.config import UPLOAD_MAX_FILES
 from garmin_dashboard.core.config import RuntimeConfig
 from garmin_dashboard.core.db import Database, json_loads
 from garmin_dashboard.core.db_ingest import load_monthly_history
@@ -166,6 +168,12 @@ class JobsAndAuthTestCase(unittest.TestCase):
                 db.delete_idle_sessions(conn, "2026-04-04 12:01:00")
                 expired = db.find_account_by_session(conn, token, "2026-04-04 12:01:01")
                 self.assertIsNone(expired)
+
+    def test_validate_upload_request_rejects_more_than_100000_files(self):
+        files = [{"name": f"f{index}.fit", "content": b"x"} for index in range(UPLOAD_MAX_FILES + 1)]
+        with self.assertRaises(ValueError) as exc:
+            validate_upload_request(files, total_bytes=len(files))
+        self.assertEqual(str(exc.exception), f"Максимум можно обработать {UPLOAD_MAX_FILES} файлов")
 
 
 if __name__ == "__main__":

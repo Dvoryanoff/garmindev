@@ -49,7 +49,7 @@ def compile_python() -> None:
 
 def main() -> None:
     compile_python()
-    run_step("tests", [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"])
+    run_step("tests", [sys.executable, "-m", "pytest", "-vv", "tests"])
 
 
 if __name__ == "__main__":

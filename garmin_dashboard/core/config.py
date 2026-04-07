@@ -27,6 +27,13 @@ def _env_int(name: str, default: int) -> int:
     return value if value > 0 else default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw not in {"0", "false", "no", "off"}
+
+
 RESOURCES_DIR = _env_path("GARMIN_RESOURCES_DIR", PROJECT_ROOT / "resources")
 FIT_DIR = _env_path("GARMIN_FIT_DIR", RESOURCES_DIR / "FIT")
 DETAIL_CSV = _env_path("GARMIN_DETAIL_CSV", PROJECT_ROOT / "garmin_swim_intervals_details.csv")
@@ -39,10 +46,12 @@ UPLOAD_DIR = _env_path("GARMIN_UPLOAD_DIR", PROJECT_ROOT / "uploads")
 SESSION_TTL_DAYS = _env_int("GARMIN_SESSION_TTL_DAYS", 30)
 SESSION_IDLE_TIMEOUT_MINUTES = _env_int("GARMIN_SESSION_IDLE_TIMEOUT_MINUTES", 120)
 BOOTSTRAP_ADMIN_EMAIL = os.getenv("GARMIN_BOOTSTRAP_ADMIN_EMAIL", "dvoryanoff@mail.ru").strip().lower()
+ENABLE_DEMO_ACCOUNTS = _env_bool("GARMIN_ENABLE_DEMO_ACCOUNTS", False)
 DEMO_USER_PASSWORD = os.getenv("GARMIN_DEMO_USER_PASSWORD", "demo-demo").strip() or "demo-demo"
-UPLOAD_MAX_FILES = _env_int("GARMIN_UPLOAD_MAX_FILES", 500)
+UPLOAD_MAX_FILES = _env_int("GARMIN_UPLOAD_MAX_FILES", 100000)
 UPLOAD_MAX_BATCH_BYTES = _env_int("GARMIN_UPLOAD_MAX_BATCH_BYTES", 32 * 1024 * 1024)
 UPLOAD_MAX_FILE_BYTES = _env_int("GARMIN_UPLOAD_MAX_FILE_BYTES", 10 * 1024 * 1024)
+REST_LONG_PAUSE_THRESHOLD_SECONDS = _env_int("GARMIN_REST_LONG_PAUSE_THRESHOLD_SECONDS", 120)
 MIN_FREE_DISK_MB = _env_int("GARMIN_MIN_FREE_DISK_MB", 512)
 AUTH_CODE_TTL_MINUTES = _env_int("GARMIN_AUTH_CODE_TTL_MINUTES", 15)
 LOGIN_RATE_LIMIT_WINDOW_MINUTES = _env_int("GARMIN_LOGIN_RATE_LIMIT_WINDOW_MINUTES", 15)

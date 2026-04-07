@@ -299,14 +299,14 @@ def build_report(request: ReportRequest) -> dict:
 
     summary_rest_by_distance = (
         compute_summary_rest_by_distance_from_payloads(list(payloads_by_activity.values()), request.interval_config)
-        if filtered_rows and request.swim_mode == "pool"
+        if filtered_rows and request.swim_mode != "open_water"
         else {}
     )
     workout_rest_by_activity = compute_workout_rest_stats_from_payloads(payloads_by_activity) if payloads_by_activity else {}
 
     summary_rows = build_summary(
         filtered_rows,
-        include_pool_rest=request.swim_mode == "pool",
+        include_pool_rest=request.swim_mode != "open_water",
         rest_by_distance=summary_rest_by_distance,
     ) if filtered_rows else []
     detail_rows = add_summary_columns_to_details(filtered_rows, summary_rows) if filtered_rows else []

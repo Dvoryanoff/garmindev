@@ -13,6 +13,7 @@ from .auth import hash_password
 from .config import (
     BOOTSTRAP_ADMIN_EMAIL,
     DEMO_USER_PASSWORD,
+    ENABLE_DEMO_ACCOUNTS,
     PROJECT_ROOT,
 )
 
@@ -435,6 +436,12 @@ class Database:
             ("demo.gamma@local", "Demo", "Gamma"),
             ("demo.delta@local", "Demo", "Delta"),
         ]
+        if not ENABLE_DEMO_ACCOUNTS:
+            for email, _, _ in demo_accounts:
+                demo = self.find_account_by_email(conn, email)
+                if demo:
+                    self.delete_account(conn, int(demo["id"]))
+            return
         created_at = datetime.now().isoformat(timespec="seconds")
         for email, first_name, last_name in demo_accounts:
             if self.find_account_by_email(conn, email):
@@ -683,6 +690,9 @@ class Database:
             "UPDATE accounts SET password_hash = ? WHERE id = ?",
             (password_hash, account_id),
         ).close()
+
+    def delete_account(self, conn, account_id: int) -> None:
+        self.execute(conn, "DELETE FROM accounts WHERE id = ?", (account_id,)).close()
 
     def get_user_preferences(self, conn, account_id: int) -> dict | None:
         return self.fetchone(

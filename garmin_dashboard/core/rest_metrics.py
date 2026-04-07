@@ -3,13 +3,12 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Callable
 
-from .config import IntervalConfig
+from .config import IntervalConfig, REST_LONG_PAUSE_THRESHOLD_SECONDS
 from .fit_parser import get_swim_type, map_stroke_label, summary_distance
 from .utils import format_duration, to_datetime
 
 
 COMPETITIVE_STROKES = {"freestyle", "backstroke", "breaststroke", "butterfly"}
-REST_CUTOFF_SECONDS = 120.0
 
 
 def sorted_rows(rows: list[dict]) -> list[dict]:
@@ -130,7 +129,7 @@ def compute_summary_rest_by_distance_from_payloads(payloads: list[dict], interva
             rest_seconds = rest_seconds_between(previous_lap, next_lap)
             if rest_seconds is None:
                 continue
-            if rest_seconds > REST_CUTOFF_SECONDS:
+            if rest_seconds > REST_LONG_PAUSE_THRESHOLD_SECONDS:
                 continue
             values_by_distance[int(previous_lap["nominal_distance"])].append(rest_seconds)
     return {distance: mean_seconds(values) for distance, values in values_by_distance.items()}
@@ -148,7 +147,7 @@ def compute_workout_rest_stats_from_payloads(payloads_by_activity: dict[str, dic
         ]
         result[activity_key] = {
             "avg_rest_s": mean_seconds(values),
-            "long_rest_count": sum(1 for value in values if value > REST_CUTOFF_SECONDS),
+            "long_rest_count": sum(1 for value in values if value > REST_LONG_PAUSE_THRESHOLD_SECONDS),
         }
     return result
 
@@ -166,7 +165,7 @@ def compute_monthly_avg_rest_from_payloads(payloads: list[dict]) -> dict[tuple[i
             rest_seconds = rest_seconds_between(previous_lap, next_lap)
             if rest_seconds is None:
                 continue
-            if rest_seconds > REST_CUTOFF_SECONDS:
+            if rest_seconds > REST_LONG_PAUSE_THRESHOLD_SECONDS:
                 continue
             dt = to_datetime(next_lap.get("lap_start"))
             if not dt:

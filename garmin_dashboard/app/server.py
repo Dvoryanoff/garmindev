@@ -122,6 +122,17 @@ def build_request_from_params(params: dict, owner_account_id: int) -> ReportRequ
     )
 
 
+def validate_upload_request(files: list[dict], total_bytes: int) -> None:
+    if not files:
+        raise ValueError("Не выбраны файлы")
+    if len(files) > UPLOAD_MAX_FILES:
+        raise ValueError(f"Максимум можно обработать {UPLOAD_MAX_FILES} файлов")
+    if total_bytes > UPLOAD_MAX_BATCH_BYTES:
+        raise ValueError(f"Слишком большой batch. Лимит: {UPLOAD_MAX_BATCH_BYTES // (1024 * 1024)} MB")
+    if any(len(file_item["content"]) > UPLOAD_MAX_FILE_BYTES for file_item in files):
+        raise ValueError(f"Один из файлов слишком большой. Лимит: {UPLOAD_MAX_FILE_BYTES // (1024 * 1024)} MB")
+
+
 class DashboardRequestHandler(SimpleHTTPRequestHandler):
     _schema_lock = threading.Lock()
     _initialized_databases: set[str] = set()
@@ -459,18 +470,7 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                         "name": item.filename,
                         "content": content,
                     })
-            if not files:
-                self.send_json({"error": "Не выбраны файлы"}, status=HTTPStatus.BAD_REQUEST)
-                return
-            if len(files) > UPLOAD_MAX_FILES:
-                self.send_json({"error": f"Слишком много файлов. Лимит: {UPLOAD_MAX_FILES}"}, status=HTTPStatus.BAD_REQUEST)
-                return
-            if total_bytes > UPLOAD_MAX_BATCH_BYTES:
-                self.send_json({"error": f"Слишком большой batch. Лимит: {UPLOAD_MAX_BATCH_BYTES // (1024 * 1024)} MB"}, status=HTTPStatus.BAD_REQUEST)
-                return
-            if any(len(file_item["content"]) > UPLOAD_MAX_FILE_BYTES for file_item in files):
-                self.send_json({"error": f"Один из файлов слишком большой. Лимит: {UPLOAD_MAX_FILE_BYTES // (1024 * 1024)} MB"}, status=HTTPStatus.BAD_REQUEST)
-                return
+            validate_upload_request(files, total_bytes)
             account_id = int(account["id"])
             payload_json = json.dumps(
                 {
@@ -594,24 +594,40 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
 
     def handle_admin_update_user(self):
         try:
-            self.require_admin()
+            actor = self.require_admin()
             payload = self.parse_json_body()
             account_id = int(payload.get("account_id") or 0)
+            action = str(payload.get("action") or "update")
             role = str(payload.get("role") or "user")
             is_active = 1 if payload.get("is_active", True) else 0
-            if role not in {"user", "admin"}:
-                raise ValueError("Некорректная роль")
             with self.db.transaction() as conn:
-                self.db.update_account(conn, account_id, role=role, is_active=is_active)
-                actor = self.require_admin()
-                self.db.append_audit_log(
-                    conn,
-                    actor_account_id=int(actor["id"]),
-                    target_account_id=account_id,
-                    event_type="admin_update_user",
-                    payload_json=json.dumps({"role": role, "is_active": is_active}, ensure_ascii=False),
-                    created_at=iso_now(),
-                )
+                target = self.db.find_account_by_id(conn, account_id)
+                if not target:
+                    raise ValueError("Пользователь не найден")
+                if action == "delete":
+                    if int(actor["id"]) == account_id:
+                        raise ValueError("Нельзя удалить текущего администратора")
+                    self.db.append_audit_log(
+                        conn,
+                        actor_account_id=int(actor["id"]),
+                        target_account_id=account_id,
+                        event_type="admin_delete_user",
+                        payload_json=json.dumps({"email": target.get("email", "")}, ensure_ascii=False),
+                        created_at=iso_now(),
+                    )
+                    self.db.delete_account(conn, account_id)
+                else:
+                    if role not in {"user", "admin"}:
+                        raise ValueError("Некорректная роль")
+                    self.db.update_account(conn, account_id, role=role, is_active=is_active)
+                    self.db.append_audit_log(
+                        conn,
+                        actor_account_id=int(actor["id"]),
+                        target_account_id=account_id,
+                        event_type="admin_update_user",
+                        payload_json=json.dumps({"role": role, "is_active": is_active}, ensure_ascii=False),
+                        created_at=iso_now(),
+                    )
             self.send_json({"ok": True})
         except PermissionError as exc:
             self.send_json({"error": str(exc)}, status=HTTPStatus.UNAUTHORIZED)
