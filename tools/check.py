@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import compileall
+import os
 import shutil
 import subprocess
 import sys
@@ -10,9 +11,19 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+def build_env() -> dict[str, str]:
+    env = dict(os.environ)
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    pythonpath_parts = [str(PROJECT_ROOT)]
+    if existing_pythonpath:
+        pythonpath_parts.append(existing_pythonpath)
+    env["PYTHONPATH"] = ":".join(pythonpath_parts)
+    return env
+
+
 def run_step(title: str, command: list[str]) -> None:
     print(f"[check] {title}")
-    completed = subprocess.run(command, cwd=PROJECT_ROOT)
+    completed = subprocess.run(command, cwd=PROJECT_ROOT, env=build_env())
     if completed.returncode != 0:
         raise SystemExit(completed.returncode)
 
@@ -32,6 +43,7 @@ def find_pytest_command() -> list[str]:
         completed = subprocess.run(
             [*command, "--version"],
             cwd=PROJECT_ROOT,
+            env=build_env(),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
