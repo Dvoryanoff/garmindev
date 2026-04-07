@@ -16,6 +16,23 @@ def run_step(title: str, command: list[str]) -> None:
         raise SystemExit(completed.returncode)
 
 
+def find_pytest_command() -> list[str]:
+    candidates = [
+        [sys.executable, "-m", "pytest"],
+        ["python3", "-m", "pytest"],
+    ]
+    for command in candidates:
+        completed = subprocess.run(
+            [*command, "--version"],
+            cwd=PROJECT_ROOT,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if completed.returncode == 0:
+            return command
+    raise SystemExit("pytest не найден ни в текущем интерпретаторе, ни в system python3")
+
+
 def compile_python() -> None:
     print("[check] py_compile")
     ok = compileall.compile_dir(
@@ -49,7 +66,7 @@ def compile_python() -> None:
 
 def main() -> None:
     compile_python()
-    run_step("tests", [sys.executable, "-m", "pytest", "-vv", "tests"])
+    run_step("tests", [*find_pytest_command(), "-vv", "tests"])
 
 
 if __name__ == "__main__":
