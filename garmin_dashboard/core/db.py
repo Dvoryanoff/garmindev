@@ -93,6 +93,10 @@ class Database:
             conn = sqlite3.connect(db_path)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA synchronous = NORMAL")
+            conn.execute("PRAGMA temp_store = MEMORY")
+            conn.execute("PRAGMA cache_size = -20000")
             return conn
         if psycopg2 is None:
             raise RuntimeError("Для PostgreSQL нужен psycopg2 или psycopg2-binary")
@@ -119,6 +123,11 @@ class Database:
     def execute(self, conn, query: str, params: tuple | list = ()):
         cursor = conn.cursor()
         cursor.execute(self._rewrite_query(query), params)
+        return cursor
+
+    def executemany(self, conn, query: str, seq_of_params):
+        cursor = conn.cursor()
+        cursor.executemany(self._rewrite_query(query), seq_of_params)
         return cursor
 
     def fetchall(self, conn, query: str, params: tuple | list = ()) -> list[dict]:
@@ -1121,8 +1130,33 @@ class Database:
             """,
             (activity_id, raw_payload),
         ).close()
-        for index, row in enumerate(intervals, start=1):
-            self.execute(
+        if intervals:
+            params = [
+                (
+                    owner_account_id,
+                    activity_id,
+                    index,
+                    row.get("file_name", ""),
+                    row.get("activity_key", ""),
+                    row.get("activity_date", ""),
+                    row.get("user_id", ""),
+                    row.get("user_name", ""),
+                    row.get("lap_start", ""),
+                    row.get("lap_end", ""),
+                    row.get("distance_m", 0.0),
+                    row.get("raw_distance_m", 0.0),
+                    row.get("time_s", 0.0),
+                    row.get("time_text", ""),
+                    row.get("workout_total_distance_m", 0.0),
+                    row.get("workout_total_time_s", 0.0),
+                    row.get("stroke", ""),
+                    row.get("swim_type", ""),
+                    row.get("pace_100m_s", 0.0),
+                    row.get("pace_100m", ""),
+                )
+                for index, row in enumerate(intervals, start=1)
+            ]
+            self.executemany(
                 conn,
                 """
                 INSERT INTO intervals (
@@ -1148,28 +1182,7 @@ class Database:
                     pace_100m
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    owner_account_id,
-                    activity_id,
-                    index,
-                    row.get("file_name", ""),
-                    row.get("activity_key", ""),
-                    row.get("activity_date", ""),
-                    row.get("user_id", ""),
-                    row.get("user_name", ""),
-                    row.get("lap_start", ""),
-                    row.get("lap_end", ""),
-                    row.get("distance_m", 0.0),
-                    row.get("raw_distance_m", 0.0),
-                    row.get("time_s", 0.0),
-                    row.get("time_text", ""),
-                    row.get("workout_total_distance_m", 0.0),
-                    row.get("workout_total_time_s", 0.0),
-                    row.get("stroke", ""),
-                    row.get("swim_type", ""),
-                    row.get("pace_100m_s", 0.0),
-                    row.get("pace_100m", ""),
-                ),
+                params,
             ).close()
         return activity_id
 

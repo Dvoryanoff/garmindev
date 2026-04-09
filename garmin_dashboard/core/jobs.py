@@ -6,6 +6,7 @@ import traceback
 import queue
 import shutil
 import threading
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
@@ -20,6 +21,7 @@ _WORKERS_STARTED: set[str] = set()
 _WORKER_LOCK = threading.Lock()
 _SCHEMA_READY_DATABASES: set[str] = set()
 _SCHEMA_READY_LOCK = threading.Lock()
+_JOB_PROGRESS_EVERY = 50
 
 
 def iso_now() -> str:
@@ -97,6 +99,40 @@ def _compact_payload(payload: dict) -> str:
         for file_item in files
     ]
     return json.dumps({"files": compact_files}, ensure_ascii=False)
+
+
+def _parse_uploaded_fit_path(path_str: str):
+    path = Path(path_str)
+    try:
+        return path_str, parse_fit_file_to_activity(path), ""
+    except Exception as exc:
+        return path_str, None, str(exc)
+
+
+def _chunked(seq: list[dict], size: int):
+    for index in range(0, len(seq), size):
+        yield seq[index:index + size]
+
+
+def _should_update_progress(completed: int, total: int, *, force: bool = False) -> bool:
+    if force or completed >= total:
+        return True
+    return completed % _JOB_PROGRESS_EVERY == 0
+
+
+def _parse_pending_files(pending_files: list[dict], runtime: RuntimeConfig):
+    if not pending_files:
+        return
+    paths = [str(item["target_path"]) for item in pending_files]
+    max_workers = max(1, int(runtime.max_workers or 1))
+    chunksize = max(1, int(runtime.batch_size or 100) // 4)
+    try:
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            for path_str, parsed, error_text in executor.map(_parse_uploaded_fit_path, paths, chunksize=chunksize):
+                yield path_str, parsed, error_text
+    except Exception:
+        for path_str in paths:
+            yield _parse_uploaded_fit_path(path_str)
 
 
 def _finalize_job_failure(db: Database, job_id: int, owner_account_id: int | None, error_text: str) -> None:
@@ -194,6 +230,7 @@ def process_job(database_url: str, job_id: int) -> None:
         duplicates = 0
         errors = 0
         parsed_rows = 0
+        pending_files: list[dict] = []
 
         total_files = max(1, len(files))
         for index, file_item in enumerate(files, start=1):
@@ -202,126 +239,140 @@ def process_job(database_url: str, job_id: int) -> None:
             file_hash = hashlib.sha256(content).hexdigest()
             stored_name = f"{file_hash[:16]}_{Path(original_name).name}"
             target_path = upload_root / stored_name
-            target_path.write_bytes(content)
-            stat = target_path.stat()
             now_text = iso_now()
 
             with db.transaction() as conn:
                 existing_hash = db.find_existing_file_by_hash(conn, owner_account_id, file_hash)
                 if existing_hash:
                     skipped += 1
-                    progress = int(index / total_files * 80)
-                    db.update_background_job(
-                        conn,
-                        job_id,
-                        processed_files=processed,
-                        skipped_files=skipped,
-                        duplicate_files=duplicates,
-                        error_files=errors,
-                        parsed_rows=parsed_rows,
-                        progress_percent=progress,
-                    )
+                    if _should_update_progress(index, total_files):
+                        progress = int(index / total_files * 15)
+                        db.update_background_job(
+                            conn,
+                            job_id,
+                            processed_files=processed,
+                            skipped_files=skipped,
+                            duplicate_files=duplicates,
+                            error_files=errors,
+                            parsed_rows=parsed_rows,
+                            progress_percent=progress,
+                        )
                     continue
 
+            target_path.write_bytes(content)
+            stat = target_path.stat()
+            pending_files.append(
+                {
+                    "index": index,
+                    "original_name": original_name,
+                    "file_hash": file_hash,
+                    "stored_name": stored_name,
+                    "target_path": target_path,
+                    "file_size": stat.st_size,
+                    "mtime_ns": stat.st_mtime_ns,
+                    "now_text": now_text,
+                }
+            )
+
+        parsed_by_path = {}
+        for path_str, parsed, error_text in _parse_pending_files(pending_files, runtime):
+            parsed_by_path[path_str] = (parsed, error_text)
+
+        completed_files = skipped
+        ingest_batches = list(_chunked(pending_files, max(1, int(runtime.batch_size or 100))))
+        for batch in ingest_batches:
             with db.transaction() as conn:
-                try:
-                    parsed = parse_fit_file_to_activity(target_path)
-                except Exception as exc:
-                    db.upsert_source_file(
-                        conn,
-                        owner_account_id=owner_account_id,
-                        file_path=str(target_path.resolve()),
-                        file_name=stored_name,
-                        original_file_name=original_name,
-                        file_hash=file_hash,
-                        file_size=stat.st_size,
-                        mtime_ns=stat.st_mtime_ns,
-                        parser_version=PARSER_VERSION,
-                        parse_status="error",
-                        error_text=str(exc),
-                        activity_key="",
-                        uploaded_at=now_text,
-                        ingested_at=now_text,
-                    )
-                    errors += 1
-                    db.update_background_job(
-                        conn,
-                        job_id,
-                        processed_files=processed,
-                        skipped_files=skipped,
-                        duplicate_files=duplicates,
-                        error_files=errors,
-                        parsed_rows=parsed_rows,
-                        progress_percent=int(index / total_files * 80),
-                        error_text=str(exc),
-                    )
-                    continue
-
-                source_file_id = db.upsert_source_file(
-                    conn,
-                    owner_account_id=owner_account_id,
-                    file_path=str(target_path.resolve()),
-                    file_name=stored_name,
-                    original_file_name=original_name,
-                    file_hash=file_hash,
-                    file_size=stat.st_size,
-                    mtime_ns=stat.st_mtime_ns,
-                    parser_version=PARSER_VERSION,
-                    parse_status=parsed["status"],
-                    error_text=parsed["error_text"],
-                    activity_key=parsed["activity_key"],
-                    uploaded_at=now_text,
-                    ingested_at=now_text,
-                )
-                if parsed["activity"]:
-                    existing_activity = db.fetch_activity_by_key(conn, owner_account_id, parsed["activity"]["activity_key"])
-                    if existing_activity and int(existing_activity["source_file_id"]) != source_file_id:
+                for item in batch:
+                    parsed, parse_error = parsed_by_path.get(str(item["target_path"]), (None, "parse result missing"))
+                    if parsed is None:
                         db.upsert_source_file(
                             conn,
                             owner_account_id=owner_account_id,
-                            file_path=str(target_path.resolve()),
-                            file_name=stored_name,
-                            original_file_name=original_name,
-                            file_hash=file_hash,
-                            file_size=stat.st_size,
-                            mtime_ns=stat.st_mtime_ns,
+                            file_path=str(item["target_path"].resolve()),
+                            file_name=item["stored_name"],
+                            original_file_name=item["original_name"],
+                            file_hash=item["file_hash"],
+                            file_size=item["file_size"],
+                            mtime_ns=item["mtime_ns"],
                             parser_version=PARSER_VERSION,
-                            parse_status="duplicate",
-                            error_text="duplicate activity_key",
-                            activity_key=parsed["activity"]["activity_key"],
-                            uploaded_at=now_text,
-                            ingested_at=now_text,
+                            parse_status="error",
+                            error_text=parse_error,
+                            activity_key="",
+                            uploaded_at=item["now_text"],
+                            ingested_at=item["now_text"],
                         )
-                        duplicates += 1
-                    else:
-                        db.replace_activity(
-                            conn,
-                            owner_account_id=owner_account_id,
-                            source_file_id=source_file_id,
-                            activity_key=parsed["activity"]["activity_key"],
-                            activity_date=parsed["activity"]["activity_date"],
-                            garmin_user_id=parsed["activity"]["garmin_user_id"],
-                            garmin_user_name=parsed["activity"]["garmin_user_name"],
-                            sport=parsed["activity"]["sport"],
-                            sub_sport=parsed["activity"]["sub_sport"],
-                            swim_type=parsed["activity"]["swim_type"],
-                            total_distance_m=parsed["activity"]["total_distance_m"],
-                            total_time_s=parsed["activity"]["total_time_s"],
-                            raw_payload=json_dumps(parsed["payload"]),
-                            intervals=parsed["intervals"],
-                        )
-                        parsed_rows += len(parsed["intervals"])
-                processed += 1
-                db.update_background_job(
-                    conn,
-                    job_id,
-                    processed_files=processed,
-                    skipped_files=skipped,
-                    duplicate_files=duplicates,
-                    error_files=errors,
-                    parsed_rows=parsed_rows,
-                    progress_percent=int(index / total_files * 80),
-                )
+                        errors += 1
+                        completed_files += 1
+                        continue
+
+                    source_file_id = db.upsert_source_file(
+                        conn,
+                        owner_account_id=owner_account_id,
+                        file_path=str(item["target_path"].resolve()),
+                        file_name=item["stored_name"],
+                        original_file_name=item["original_name"],
+                        file_hash=item["file_hash"],
+                        file_size=item["file_size"],
+                        mtime_ns=item["mtime_ns"],
+                        parser_version=PARSER_VERSION,
+                        parse_status=parsed["status"],
+                        error_text=parsed["error_text"],
+                        activity_key=parsed["activity_key"],
+                        uploaded_at=item["now_text"],
+                        ingested_at=item["now_text"],
+                    )
+                    if parsed["activity"]:
+                        existing_activity = db.fetch_activity_by_key(conn, owner_account_id, parsed["activity"]["activity_key"])
+                        if existing_activity and int(existing_activity["source_file_id"]) != source_file_id:
+                            db.upsert_source_file(
+                                conn,
+                                owner_account_id=owner_account_id,
+                                file_path=str(item["target_path"].resolve()),
+                                file_name=item["stored_name"],
+                                original_file_name=item["original_name"],
+                                file_hash=item["file_hash"],
+                                file_size=item["file_size"],
+                                mtime_ns=item["mtime_ns"],
+                                parser_version=PARSER_VERSION,
+                                parse_status="duplicate",
+                                error_text="duplicate activity_key",
+                                activity_key=parsed["activity"]["activity_key"],
+                                uploaded_at=item["now_text"],
+                                ingested_at=item["now_text"],
+                            )
+                            duplicates += 1
+                        else:
+                            db.replace_activity(
+                                conn,
+                                owner_account_id=owner_account_id,
+                                source_file_id=source_file_id,
+                                activity_key=parsed["activity"]["activity_key"],
+                                activity_date=parsed["activity"]["activity_date"],
+                                garmin_user_id=parsed["activity"]["garmin_user_id"],
+                                garmin_user_name=parsed["activity"]["garmin_user_name"],
+                                sport=parsed["activity"]["sport"],
+                                sub_sport=parsed["activity"]["sub_sport"],
+                                swim_type=parsed["activity"]["swim_type"],
+                                total_distance_m=parsed["activity"]["total_distance_m"],
+                                total_time_s=parsed["activity"]["total_time_s"],
+                                raw_payload=json_dumps(parsed["payload"]),
+                                intervals=parsed["intervals"],
+                            )
+                            parsed_rows += len(parsed["intervals"])
+                    processed += 1
+                    completed_files += 1
+
+                if _should_update_progress(completed_files, total_files, force=True):
+                    db.update_background_job(
+                        conn,
+                        job_id,
+                        processed_files=processed,
+                        skipped_files=skipped,
+                        duplicate_files=duplicates,
+                        error_files=errors,
+                        parsed_rows=parsed_rows,
+                        progress_percent=max(15, int(completed_files / total_files * 80)),
+                    )
 
         status = "done" if errors == 0 else ("partial" if processed > 0 or skipped > 0 or duplicates > 0 else "failed")
         compact_payload = json.loads(_compact_payload(payload))

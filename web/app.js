@@ -674,8 +674,6 @@ async function pollUploadJob(jobId, context = {}) {
   activeUploadJobId = jobId;
   setUploadButtonsDisabled(true);
   activeUploadPollPromise = (async () => {
-    let reportRefreshedWhileRunning = false;
-    let lastRenderedProgress = -1;
     const waitStartedAt = Date.now();
     while (activeUploadJobId === jobId) {
       const payload = await api(`/api/jobs/${jobId}?_ts=${Date.now()}`);
@@ -710,14 +708,6 @@ async function pollUploadJob(jobId, context = {}) {
       setUploadHint(statusParts.join(" • "));
       if (!dashboardContentEl.hidden && job.error_text) {
         setUploadHint(job.error_text);
-      }
-      if (processedFiles > 0 && jobProgress >= 20 && jobProgress !== lastRenderedProgress) {
-        lastRenderedProgress = jobProgress;
-        showDashboard(true);
-        if (!reportRefreshedWhileRunning || lastRenderedProgress >= 60) {
-          reportRefreshedWhileRunning = true;
-          await Promise.allSettled([loadReport(), loadMonthlyHistory()]);
-        }
       }
       if (job.status === "done" || job.status === "partial" || job.status === "failed") {
         activeUploadJobId = null;
@@ -802,8 +792,6 @@ async function uploadFiles() {
       skipped += Number(job?.skipped_files || 0);
       duplicates += Number(job?.duplicate_files || 0);
       errors += Number(job?.error_files || 0);
-      showDashboard(true);
-      await loadReport();
     }
     alert(`Импорт завершён. Обработано: ${processed}, пропущено: ${skipped}, дубликаты: ${duplicates}, ошибки: ${errors}`);
     clearUploadInputs();
