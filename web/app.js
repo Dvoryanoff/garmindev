@@ -332,7 +332,7 @@ function renderSummary(rows) {
       <td>${escapeHtml(row.best_pace_100m)}</td>
       <td>${escapeHtml(row.best_pace_date)}</td>
       <td>${escapeHtml(row.avg_pace_100m)}</td>
-      <td>${escapeHtml(row.middle_pace_100m)} <span class="muted">(${escapeHtml(row.middle_count)})</span></td>
+      <td>${escapeHtml(String(row.middle_pace_100m || "").replace("/100m", ""))} <span class="muted">(${escapeHtml(row.middle_count)}/${escapeHtml(row.middle_total_count ?? row.count)})</span></td>
       <td>${escapeHtml(row.avg_rest || "—")}</td>
     </tr>
   `).join("");

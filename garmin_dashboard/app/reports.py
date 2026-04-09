@@ -191,6 +191,7 @@ def build_summary(rows: list[dict], *, include_pool_rest: bool = False, rest_by_
             "best_pace_100m": pace_str(best_pace_row["pace_100m_s"]),
             "best_pace_date": best_pace_date_text(best_pace_row),
             "middle_count": middle_count,
+            "middle_total_count": count,
             "middle_pace_100m_s": round(middle_pace, 2),
             "middle_pace_100m": pace_str_precise(middle_pace),
             "avg_rest_s": rest_by_distance.get(distance),
