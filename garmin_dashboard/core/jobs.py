@@ -124,6 +124,9 @@ def _parse_pending_files(pending_files: list[dict], runtime: RuntimeConfig):
     if not pending_files:
         return
     paths = [str(item["target_path"]) for item in pending_files]
+    if len(paths) == 1:
+        yield _parse_uploaded_fit_path(paths[0])
+        return
     max_workers = max(1, int(runtime.max_workers or 1))
     chunksize = max(1, int(runtime.batch_size or 100) // 4)
     try:

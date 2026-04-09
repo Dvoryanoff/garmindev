@@ -1271,41 +1271,31 @@ class Database:
         }
 
     def upsert_monthly_best(self, conn, *, owner_account_id: int, year: int, month: int, distance_m: int, best_pace_s: float, best_pace_text: str) -> None:
-        existing = self.fetchone(
+        self.execute(
             conn,
             """
-            SELECT id, best_pace_s
-            FROM monthly_history
-            WHERE owner_account_id = ? AND year = ? AND month = ? AND distance_m = ?
+            INSERT INTO monthly_history (
+                owner_account_id,
+                year,
+                month,
+                distance_m,
+                best_pace_s,
+                best_pace_text
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(owner_account_id, year, month, distance_m) DO UPDATE SET
+                best_pace_s = CASE
+                    WHEN monthly_history.best_pace_s = 0 OR excluded.best_pace_s < monthly_history.best_pace_s
+                    THEN excluded.best_pace_s
+                    ELSE monthly_history.best_pace_s
+                END,
+                best_pace_text = CASE
+                    WHEN monthly_history.best_pace_s = 0 OR excluded.best_pace_s < monthly_history.best_pace_s
+                    THEN excluded.best_pace_text
+                    ELSE monthly_history.best_pace_text
+                END
             """,
-            (owner_account_id, year, month, distance_m),
-        )
-        if existing is None:
-            self.execute(
-                conn,
-                """
-                INSERT INTO monthly_history (
-                    owner_account_id,
-                    year,
-                    month,
-                    distance_m,
-                    best_pace_s,
-                    best_pace_text
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (owner_account_id, year, month, distance_m, best_pace_s, best_pace_text),
-            ).close()
-            return
-        if float(existing.get("best_pace_s") or 0) == 0 or best_pace_s < float(existing["best_pace_s"]):
-            self.execute(
-                conn,
-                """
-                UPDATE monthly_history
-                SET best_pace_s = ?, best_pace_text = ?
-                WHERE id = ?
-                """,
-                (best_pace_s, best_pace_text, existing["id"]),
-            ).close()
+            (owner_account_id, year, month, distance_m, best_pace_s, best_pace_text),
+        ).close()
 
     def fetch_monthly_history(self, conn, owner_account_id: int) -> list[dict]:
         return self.fetchall(
