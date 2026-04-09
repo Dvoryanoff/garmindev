@@ -64,7 +64,7 @@ SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", "").strip()
 SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "1").strip().lower() not in {"0", "false", "no", "off"}
 SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "0").strip().lower() not in {"0", "false", "no", "off"}
 
-MONTHLY_FIXED_DISTANCES = (50, 100, 200, 400, 800, 1000, 1200, 1500, 1800)
+MONTHLY_FIXED_DISTANCES = (50, 100, 200, 400, 600, 800, 1000, 1200, 1500, 1800)
 
 CACHE_VERSION = 7
 PARSER_VERSION = CACHE_VERSION + 1001

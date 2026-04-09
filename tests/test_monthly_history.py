@@ -56,6 +56,7 @@ class MonthlyHistoryTestCase(unittest.TestCase):
         may = monthly_rows[0]
         self.assertEqual(may["date"], "Май 2024")
         self.assertEqual(may[400], "1:40.0")
+        self.assertIn(600, MONTHLY_FIXED_DISTANCES)
         self.assertIn(1500, MONTHLY_FIXED_DISTANCES)
         self.assertIn(1800, MONTHLY_FIXED_DISTANCES)
 

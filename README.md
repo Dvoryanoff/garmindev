@@ -89,6 +89,8 @@ docker compose up --build
 
 По умолчанию frontend будет доступен на [http://127.0.0.1:8080](http://127.0.0.1:8080).
 
+При первом запуске на пустой базе данных первый зарегистрированный через UI пользователь автоматически получает роль `admin`.
+
 ## Пользовательский сценарий
 
 1. Открыть главную страницу `/`.
@@ -118,12 +120,10 @@ docker compose up --build
 - локально: [http://127.0.0.1:8000/admin](http://127.0.0.1:8000/admin)
 - Docker: [http://127.0.0.1:8080/admin](http://127.0.0.1:8080/admin)
 
-По умолчанию при инициализации БД создаётся системный superadmin:
+При чистой базе админка инициализируется через bootstrap-режим:
 
-- `e-mail`: `admin-admin@local`
-- `password`: `admin-admin`
-
-Этот аккаунт создаётся автоматически и поддерживается как admin на старте БД.
+- первый зарегистрированный пользователь становится `admin`
+- все последующие регистрации получают роль `user`
 
 Сейчас админка умеет:
 
@@ -144,10 +144,7 @@ docker compose up --build
 - `DATABASE_URL`
 - `GARMIN_UPLOAD_DIR`
 - `GARMIN_SESSION_TTL_DAYS`
-- `GARMIN_SUPERADMIN_EMAIL`
-- `GARMIN_SUPERADMIN_PASSWORD`
-- `GARMIN_SUPERADMIN_FIRST_NAME`
-- `GARMIN_SUPERADMIN_LAST_NAME`
+- `GARMIN_BOOTSTRAP_ADMIN_EMAIL`
 
 Для Docker Compose:
 

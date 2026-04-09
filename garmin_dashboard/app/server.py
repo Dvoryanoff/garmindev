@@ -122,6 +122,12 @@ def build_request_from_params(params: dict, owner_account_id: int) -> ReportRequ
     )
 
 
+def resolve_registration_role(db: Database, conn) -> str:
+    # Bootstrap mode: only the very first account in a clean database
+    # becomes admin automatically.
+    return "admin" if db.count_accounts(conn) == 0 else "user"
+
+
 def validate_upload_request(files: list[dict], total_bytes: int) -> None:
     if not files:
         raise ValueError("Не выбраны файлы")
@@ -308,13 +314,14 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             if self.db.find_account_by_email(conn, email):
                 self.send_json({"error": "Такой e-mail уже зарегистрирован"}, status=HTTPStatus.BAD_REQUEST)
                 return
+            role = resolve_registration_role(self.db, conn)
             account_id = self.db.create_account(
                 conn,
                 email=email,
                 password_hash=hash_password(password),
                 first_name=first_name,
                 last_name=last_name,
-                role="user",
+                role=role,
                 created_at=iso_now(),
             )
             self.db.save_user_preferences(
@@ -332,10 +339,13 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                 actor_account_id=account_id,
                 target_account_id=account_id,
                 event_type="account_registered",
-                payload_json=json.dumps({"email": email}, ensure_ascii=False),
+                payload_json=json.dumps({"email": email, "role": role}, ensure_ascii=False),
                 created_at=iso_now(),
             )
-        self.send_json({"ok": True, "message": "Учётная запись создана"})
+        message = "Учётная запись создана"
+        if role == "admin":
+            message = "Учётная запись создана. Первый пользователь назначен администратором."
+        self.send_json({"ok": True, "message": message, "role": role})
 
     def handle_login(self):
         payload = self.parse_json_body()

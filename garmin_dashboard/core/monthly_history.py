@@ -600,7 +600,7 @@ def monthly_rows_to_entries(rows: list[dict]) -> list[dict]:
 
 def build_monthly_history_payload(rows: list[dict]) -> dict:
     entries = monthly_rows_to_entries(rows)
-    headers = [50, 100, 200, 400, 800, 1000, 1200, 1500, 1800]
+    headers = list(MONTHLY_FIXED_DISTANCES)
     years = sorted({entry["year"] for entry in entries}, reverse=True)
     best_by_year_distance = {}
     for year in years:

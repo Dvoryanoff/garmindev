@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from garmin_dashboard.app.server import validate_upload_request
+from garmin_dashboard.app.server import resolve_registration_role, validate_upload_request
 from garmin_dashboard.core.auth import hash_password, session_expiry
 from garmin_dashboard.core.config import UPLOAD_MAX_FILES
 from garmin_dashboard.core.config import RuntimeConfig
@@ -174,6 +174,32 @@ class JobsAndAuthTestCase(unittest.TestCase):
         with self.assertRaises(ValueError) as exc:
             validate_upload_request(files, total_bytes=len(files))
         self.assertEqual(str(exc.exception), f"Максимум можно обработать {UPLOAD_MAX_FILES} файлов")
+
+    def test_first_registered_account_becomes_admin_only_in_empty_database(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = RuntimeConfig(
+                database_url=f"sqlite:///{root / 'garmin_dashboard.sqlite'}",
+                upload_dir=root / "uploads",
+                db_auto_ingest=False,
+            )
+            db = Database(runtime.database_url)
+            db.init_schema()
+            with db.transaction() as conn:
+                self.assertEqual(resolve_registration_role(db, conn), "admin")
+                first_account_id = db.create_account(
+                    conn,
+                    email="first@example.com",
+                    password_hash=hash_password("password123"),
+                    first_name="First",
+                    last_name="Admin",
+                    role=resolve_registration_role(db, conn),
+                    created_at="2026-04-07 09:00:00",
+                )
+                first_account = db.find_account_by_email(conn, "first@example.com")
+                self.assertEqual(first_account["role"], "admin")
+                self.assertEqual(first_account_id, int(first_account["id"]))
+                self.assertEqual(resolve_registration_role(db, conn), "user")
 
 
 if __name__ == "__main__":

@@ -460,6 +460,10 @@ class Database:
         row = self.fetchone(conn, "SELECT COUNT(*) AS count FROM accounts")
         return int(row["count"] if row else 0)
 
+    def count_admin_accounts(self, conn) -> int:
+        row = self.fetchone(conn, "SELECT COUNT(*) AS count FROM accounts WHERE role = 'admin'")
+        return int(row["count"] if row else 0)
+
     def create_account(self, conn, *, email: str, password_hash: str, first_name: str, last_name: str, role: str, created_at: str) -> int:
         self.execute(
             conn,
