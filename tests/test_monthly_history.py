@@ -4,6 +4,7 @@ from garmin_dashboard.core.monthly_history import (
     MONTHLY_FIXED_DISTANCES,
     build_entries_by_user,
     build_monthly_entries,
+    build_yearly_records_payload,
     choose_user_name,
     dedupe_workouts,
     sanitize_user_slug,
@@ -106,6 +107,17 @@ class MonthlyHistoryTestCase(unittest.TestCase):
 
         monthly_rows = build_monthly_entries(rows, month_rest_by_key={(2024, 4): 20.0})
         self.assertEqual(monthly_rows[0]["avg_rest"], "0:20")
+
+    def test_build_yearly_records_payload_uses_best_per_year_and_distance(self):
+        payload = build_yearly_records_payload([
+            {"year": 2025, "month": 1, "distance_m": 100, "best_pace_s": 82.0, "best_pace_text": "1:22.0"},
+            {"year": 2025, "month": 2, "distance_m": 100, "best_pace_s": 80.0, "best_pace_text": "1:20.0"},
+            {"year": 2024, "month": 3, "distance_m": 100, "best_pace_s": 84.0, "best_pace_text": "1:24.0"},
+        ])
+        self.assertEqual(payload["rows"][0]["year"], 2025)
+        self.assertEqual(payload["rows"][0]["values"][1]["text"], "1:20.0")
+        self.assertEqual(payload["rows"][1]["year"], 2024)
+        self.assertEqual(payload["rows"][1]["values"][1]["text"], "1:24.0")
 
     def test_dedupe_workouts_keeps_unique_activity_keys(self):
         workouts = {

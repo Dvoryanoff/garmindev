@@ -633,6 +633,53 @@ def build_monthly_history_payload(rows: list[dict]) -> dict:
     }
 
 
+def build_yearly_records_payload(rows: list[dict]) -> dict:
+    headers = list(MONTHLY_FIXED_DISTANCES)
+    best_by_year_distance: dict[tuple[int, int], tuple[float, str]] = {}
+    for row in rows:
+        year = int(row.get("year") or 0)
+        distance = int(row.get("distance_m") or 0)
+        pace_s = row.get("best_pace_s")
+        pace_text = str(row.get("best_pace_text") or "")
+        if not year or distance not in headers or pace_s in (None, "", 0):
+            continue
+        try:
+            pace_value = float(pace_s)
+        except Exception:
+            continue
+        key = (year, distance)
+        current = best_by_year_distance.get(key)
+        if current is None or pace_value < current[0]:
+            best_by_year_distance[key] = (pace_value, pace_text)
+
+    years = sorted({year for year, _ in best_by_year_distance.keys()}, reverse=True)
+    overall_best_by_distance: dict[int, float | None] = {}
+    for distance in headers:
+        values = [best_by_year_distance[(year, distance)][0] for year in years if (year, distance) in best_by_year_distance]
+        overall_best_by_distance[distance] = min(values) if values else None
+
+    return {
+        "headers": headers,
+        "rows": [
+            {
+                "year": year,
+                "values": [
+                    {
+                        "text": best_by_year_distance.get((year, distance), ("", ""))[1] or "",
+                        "best": (
+                            (year, distance) in best_by_year_distance
+                            and overall_best_by_distance.get(distance) is not None
+                            and best_by_year_distance[(year, distance)][0] == overall_best_by_distance.get(distance)
+                        ),
+                    }
+                    for distance in headers
+                ],
+            }
+            for year in years
+        ],
+    }
+
+
 def build_monthly_history_workbook_bytes(rows: list[dict]) -> bytes:
     entries = monthly_rows_to_entries(rows)
     with tempfile.NamedTemporaryFile(mode="wb", suffix=".xlsx", delete=False) as fh:

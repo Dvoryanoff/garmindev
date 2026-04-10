@@ -473,6 +473,12 @@ class Database:
         row = self.fetchone(conn, "SELECT COUNT(*) AS count FROM accounts WHERE role = 'admin'")
         return int(row["count"] if row else 0)
 
+    def get_primary_admin_account_id(self, conn) -> int | None:
+        row = self.fetchone(conn, "SELECT MIN(id) AS id FROM accounts")
+        if not row or row.get("id") in (None, ""):
+            return None
+        return int(row["id"])
+
     def create_account(self, conn, *, email: str, password_hash: str, first_name: str, last_name: str, role: str, created_at: str) -> int:
         self.execute(
             conn,
@@ -583,6 +589,7 @@ class Database:
         )
 
     def list_accounts_with_stats(self, conn) -> list[dict]:
+        primary_admin_id = self.get_primary_admin_account_id(conn)
         return self.fetchall(
             conn,
             """
@@ -623,7 +630,53 @@ class Database:
             ) AS user_preferences ON user_preferences.account_id = accounts.id
             ORDER BY accounts.created_at DESC, accounts.id DESC
             """
-        )
+        ) if primary_admin_id is None else [
+            {
+                **row,
+                "is_primary_admin": 1 if int(row.get("id") or 0) == primary_admin_id else 0,
+            }
+            for row in self.fetchall(
+                conn,
+                """
+                SELECT
+                    accounts.id,
+                    accounts.email,
+                    accounts.first_name,
+                    accounts.last_name,
+                    accounts.role,
+                    accounts.is_active,
+                    accounts.created_at,
+                    accounts.last_login_at,
+                    COALESCE(files.files_count, 0) AS files_count,
+                    COALESCE(activities.activities_count, 0) AS activities_count,
+                    COALESCE(intervals.intervals_count, 0) AS intervals_count,
+                    COALESCE(activities.last_activity_date, '') AS last_activity_date,
+                    COALESCE(user_preferences.period, '') AS period,
+                    COALESCE(user_preferences.target_distances, '') AS target_distances
+                FROM accounts
+                LEFT JOIN (
+                    SELECT owner_account_id, COUNT(*) AS files_count
+                    FROM source_files
+                    GROUP BY owner_account_id
+                ) AS files ON files.owner_account_id = accounts.id
+                LEFT JOIN (
+                    SELECT owner_account_id, COUNT(*) AS activities_count, MAX(activity_date) AS last_activity_date
+                    FROM activities
+                    GROUP BY owner_account_id
+                ) AS activities ON activities.owner_account_id = accounts.id
+                LEFT JOIN (
+                    SELECT owner_account_id, COUNT(*) AS intervals_count
+                    FROM intervals
+                    GROUP BY owner_account_id
+                ) AS intervals ON intervals.owner_account_id = accounts.id
+                LEFT JOIN (
+                    SELECT account_id, period, target_distances
+                    FROM user_preferences
+                ) AS user_preferences ON user_preferences.account_id = accounts.id
+                ORDER BY accounts.created_at DESC, accounts.id DESC
+                """
+            )
+        ]
 
     def admin_overview(self, conn) -> dict:
         users_row = self.fetchone(

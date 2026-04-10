@@ -61,11 +61,15 @@ const monthlyHeaderRowEl = document.getElementById("monthlyHeaderRow");
 const monthlyTableBodyEl = document.querySelector("#monthlyTable tbody");
 const monthlyExportEl = document.getElementById("monthlyExport");
 const monthlyYearSelectEl = document.getElementById("monthlyYearSelect");
+const yearlyHeaderRowEl = document.getElementById("yearlyHeaderRow");
+const yearlyTableBodyEl = document.querySelector("#yearlyTable tbody");
+const yearlyExportEl = document.getElementById("yearlyExport");
 
 const defaultSelectedDistances = new Set([50, 100, 150, 200, 300, 400, 500, 600, 800, 1000]);
 let runtimeStatusTimer = null;
 let sessionState = null;
 let monthlyHistoryState = { headers: [], years: [], rows: [] };
+let yearlyRecordsState = { headers: [], rows: [] };
 let authRequestState = { login: false, register: false };
 let activeUploadJobId = null;
 let activeUploadPollPromise = null;
@@ -429,6 +433,30 @@ function renderMonthlyHistory(payload) {
   renderMonthlyHistoryYear(selectedYear);
 }
 
+
+function renderYearlyRecords(payload) {
+  yearlyRecordsState = {
+    headers: Array.isArray(payload.headers) ? payload.headers : [],
+    rows: Array.isArray(payload.rows) ? payload.rows : [],
+  };
+  const headers = yearlyRecordsState.headers;
+  yearlyHeaderRowEl.innerHTML = `<th>Год</th>${headers.map((distance) => `<th>${escapeHtml(distance)} м</th>`).join("")}`;
+  yearlyTableBodyEl.innerHTML = yearlyRecordsState.rows.length
+    ? yearlyRecordsState.rows.map((row) => `
+      <tr>
+        <td>${escapeHtml(row.year)}</td>
+        ${row.values.map((value) => `
+          <td>
+            <span class="pace-pill ${value.best ? "is-best" : ""}">
+              ${escapeHtml(value.text || "—")}
+            </span>
+          </td>
+        `).join("")}
+      </tr>
+    `).join("")
+    : `<tr><td colspan="${headers.length + 1}">Пока нет годовых рекордов.</td></tr>`;
+}
+
 function renderMonthlyHistoryYear(year) {
   const headers = monthlyHistoryState.headers;
   const rows = monthlyHistoryState.rows.filter((row) => Number(row.year) === Number(year));
@@ -515,6 +543,18 @@ async function loadMonthlyHistory() {
   }
 }
 
+async function loadYearlyRecords() {
+  try {
+    const payload = await api(`/api/yearly-records?_ts=${Date.now()}`);
+    renderYearlyRecords(payload);
+  } catch (error) {
+    if (handleUnauthorizedError(error)) {
+      return;
+    }
+    yearlyTableBodyEl.innerHTML = `<tr><td colspan="11">${escapeHtml(error.message)}</td></tr>`;
+  }
+}
+
 async function refreshSession() {
   sessionState = await api(`/api/auth/session?_ts=${Date.now()}`);
   if (!sessionState.authenticated) {
@@ -542,12 +582,15 @@ async function refreshSession() {
   if (hasData) {
     await loadReport();
     await loadMonthlyHistory();
+    await loadYearlyRecords();
   } else {
     metricsEl.innerHTML = "";
     summaryTableEl.innerHTML = "";
     workoutsTableEl.innerHTML = "";
     monthlyHeaderRowEl.innerHTML = "";
     monthlyTableBodyEl.innerHTML = "";
+    yearlyHeaderRowEl.innerHTML = "";
+    yearlyTableBodyEl.innerHTML = "";
     renderMeta({
       total_files: 0,
       ready_files: 0,
@@ -799,6 +842,7 @@ async function uploadFiles() {
     showDashboard(true);
     await loadReport();
     await loadMonthlyHistory();
+    await loadYearlyRecords();
   } catch (error) {
     if (handleUnauthorizedError(error)) {
       return;
@@ -921,6 +965,7 @@ syncPeriodMode();
 renderDistancePicker();
 updateUploadSelection();
 monthlyExportEl.href = "/api/export/monthly-history.xlsx";
+yearlyExportEl.href = "/api/export/yearly-records.xlsx";
 monthlyYearSelectEl.addEventListener("change", () => renderMonthlyHistoryYear(Number(monthlyYearSelectEl.value)));
 runtimeStatusTimer = window.setInterval(refreshRuntimeStatus, 3000);
 window.setInterval(checkSessionHeartbeat, SESSION_HEARTBEAT_MS);

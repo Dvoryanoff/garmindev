@@ -30,7 +30,11 @@ from garmin_dashboard.core.config import (
 from garmin_dashboard.core.db import Database
 from garmin_dashboard.core.db_ingest import load_monthly_history
 from garmin_dashboard.core.jobs import enqueue_job, ensure_workers
-from garmin_dashboard.core.monthly_history import build_monthly_history_payload, build_monthly_history_workbook_bytes
+from garmin_dashboard.core.monthly_history import (
+    build_monthly_history_payload,
+    build_monthly_history_workbook_bytes,
+    build_yearly_records_payload,
+)
 from .reports import build_report
 
 WEB_ROOT = PROJECT_ROOT / "web"
@@ -182,6 +186,9 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/monthly-history":
             self.handle_monthly_history()
             return
+        if parsed.path == "/api/yearly-records":
+            self.handle_yearly_records()
+            return
         if parsed.path == "/api/export/summary.xlsx":
             self.handle_excel_export(parsed.query, kind="summary")
             return
@@ -190,6 +197,9 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/export/monthly-history.xlsx":
             self.handle_monthly_history_export()
+            return
+        if parsed.path == "/api/export/yearly-records.xlsx":
+            self.handle_yearly_records_export()
             return
         if parsed.path == "/api/admin/users":
             self.handle_admin_users()
@@ -546,6 +556,15 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
         except PermissionError as exc:
             self.send_json({"error": str(exc)}, status=HTTPStatus.UNAUTHORIZED)
 
+    def handle_yearly_records(self):
+        try:
+            account = self.require_account()
+            with self.db.transaction() as conn:
+                rows = self.db.fetch_monthly_history(conn, int(account["id"]))
+            self.send_json(build_yearly_records_payload(rows))
+        except PermissionError as exc:
+            self.send_json({"error": str(exc)}, status=HTTPStatus.UNAUTHORIZED)
+
     def handle_monthly_history_export(self):
         try:
             account = self.require_account()
@@ -554,6 +573,28 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             self.send_header("Content-Disposition", 'attachment; filename="monthly-history.xlsx"')
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+        except PermissionError as exc:
+            self.send_json({"error": str(exc)}, status=HTTPStatus.UNAUTHORIZED)
+
+    def handle_yearly_records_export(self):
+        try:
+            account = self.require_account()
+            with self.db.transaction() as conn:
+                rows = self.db.fetch_monthly_history(conn, int(account["id"]))
+            yearly_payload = build_yearly_records_payload(rows)
+            headers = ["Год", *[f"{distance} м" for distance in yearly_payload["headers"]]]
+            table_rows = [
+                [str(row["year"]), *[(value.get("text") or "—") for value in row.get("values", [])]]
+                for row in yearly_payload["rows"]
+            ]
+            from garmin_dashboard.core.xlsx_export import build_workbook_bytes
+            payload = build_workbook_bytes(sheet_name="Годовые рекорды", headers=headers, rows=table_rows)
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            self.send_header("Content-Disposition", 'attachment; filename="yearly-records.xlsx"')
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
@@ -612,8 +653,11 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             is_active = 1 if payload.get("is_active", True) else 0
             with self.db.transaction() as conn:
                 target = self.db.find_account_by_id(conn, account_id)
+                primary_admin_id = self.db.get_primary_admin_account_id(conn)
                 if not target:
                     raise ValueError("Пользователь не найден")
+                if primary_admin_id is not None and account_id == primary_admin_id:
+                    raise ValueError("Нельзя менять роль или доступ первому администратору")
                 if action == "delete":
                     if int(actor["id"]) == account_id:
                         raise ValueError("Нельзя удалить текущего администратора")

@@ -199,6 +199,10 @@ class JobsAndAuthTestCase(unittest.TestCase):
                 first_account = db.find_account_by_email(conn, "first@example.com")
                 self.assertEqual(first_account["role"], "admin")
                 self.assertEqual(first_account_id, int(first_account["id"]))
+                self.assertEqual(db.get_primary_admin_account_id(conn), first_account_id)
+                users = db.list_accounts_with_stats(conn)
+                first_user = next(user for user in users if int(user["id"]) == first_account_id)
+                self.assertEqual(int(first_user["is_primary_admin"]), 1)
                 self.assertEqual(resolve_registration_role(db, conn), "user")
 
 

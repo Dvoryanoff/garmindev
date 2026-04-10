@@ -108,15 +108,19 @@ function renderAdminRoles(users) {
       <td>${escapeHtml(user.last_login_at || "—")}</td>
       <td>
         <div class="admin-actions">
-          <button class="small-button admin-action-button" data-action="toggle-role" data-id="${escapeHtml(user.id)}" data-role="${escapeHtml(user.role)}">
-            ${user.role === "admin" ? "Сделать user" : "Сделать admin"}
-          </button>
-          <button class="small-button secondary-button admin-action-button" data-action="toggle-active" data-id="${escapeHtml(user.id)}" data-active="${Number(user.is_active) ? "1" : "0"}">
-            ${Number(user.is_active) ? "Отключить" : "Включить"}
-          </button>
-          ${Number(user.id) === Number(adminSessionState?.account?.id)
-            ? ""
-            : `<button class="small-button secondary-button admin-action-button" data-action="delete-user" data-id="${escapeHtml(user.id)}" data-email="${escapeHtml(user.email)}">Удалить</button>`}
+          ${Number(user.is_primary_admin)
+            ? `<span class="muted">админ</span>`
+            : `
+              <button class="small-button admin-action-button" data-action="toggle-role" data-id="${escapeHtml(user.id)}" data-role="${escapeHtml(user.role)}">
+                ${user.role === "admin" ? "Сделать user" : "Сделать admin"}
+              </button>
+              <button class="small-button secondary-button admin-action-button" data-action="toggle-active" data-id="${escapeHtml(user.id)}" data-active="${Number(user.is_active) ? "1" : "0"}">
+                ${Number(user.is_active) ? "Отключить" : "Включить"}
+              </button>
+              ${Number(user.id) === Number(adminSessionState?.account?.id)
+                ? ""
+                : `<button class="small-button secondary-button admin-action-button" data-action="delete-user" data-id="${escapeHtml(user.id)}" data-email="${escapeHtml(user.email)}">Удалить</button>`}
+            `}
         </div>
       </td>
     </tr>
