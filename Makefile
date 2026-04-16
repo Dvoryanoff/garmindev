@@ -1,11 +1,13 @@
 PYTHON ?= python3
 
-.PHONY: help run run-no-browser restart test test-reports test-auth check benchmark organize-fits db-reset cache-clear runtime-clear reset-local git-status git-push git-wip
+.PHONY: help run run-no-browser run-django-admin django-migrate restart test test-reports test-auth check benchmark organize-fits db-reset cache-clear runtime-clear reset-local git-status git-push git-wip
 
 help:
 	@echo "Доступные команды:"
 	@echo "  make run            - запустить дашборд"
 	@echo "  make run-no-browser - запустить без автооткрытия браузера"
+	@echo "  make run-django-admin - запустить только Django admin"
+	@echo "  make django-migrate - применить миграции Django admin"
 	@echo "  make test           - все тесты"
 	@echo "  make test-reports   - тесты отчётов"
 	@echo "  make test-auth      - тесты auth/jobs"
@@ -25,6 +27,12 @@ run:
 
 run-no-browser:
 	GARMIN_OPEN_BROWSER=0 $(PYTHON) run_dashboard.py
+
+run-django-admin:
+	$(PYTHON) run_django_admin.py
+
+django-migrate:
+	$(PYTHON) manage.py migrate
 
 restart:
 	$(MAKE) run-no-browser

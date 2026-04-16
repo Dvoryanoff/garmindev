@@ -345,6 +345,21 @@ class Database:
             self.execute(
                 conn,
                 f"""
+                CREATE TABLE IF NOT EXISTS report_runs (
+                    id {id_pk},
+                    owner_account_id {bigint} NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+                    created_at TEXT NOT NULL DEFAULT '',
+                    period_label TEXT NOT NULL DEFAULT '',
+                    filters_json {json_type},
+                    overview_json {json_type},
+                    summary_json {json_type},
+                    workouts_json {json_type}
+                )
+                """,
+            ).close()
+            self.execute(
+                conn,
+                f"""
                 CREATE TABLE IF NOT EXISTS auth_codes (
                     id {id_pk},
                     email TEXT NOT NULL,
@@ -416,6 +431,7 @@ class Database:
                 "CREATE INDEX IF NOT EXISTS idx_sessions_token ON user_sessions(session_token)",
                 "CREATE INDEX IF NOT EXISTS idx_jobs_owner_created ON background_jobs(owner_account_id, created_at)",
                 "CREATE INDEX IF NOT EXISTS idx_jobs_status_created ON background_jobs(status, created_at)",
+                "CREATE INDEX IF NOT EXISTS idx_report_runs_owner_created ON report_runs(owner_account_id, created_at)",
                 "CREATE INDEX IF NOT EXISTS idx_auth_codes_email_purpose ON auth_codes(email, purpose, created_at)",
                 "CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at)",
                 "CREATE INDEX IF NOT EXISTS idx_login_attempts_email_time ON login_attempts(email, attempted_at)",
@@ -915,6 +931,58 @@ class Database:
             """,
             (owner_account_id, limit),
         )
+
+    def create_report_run(
+        self,
+        conn,
+        *,
+        owner_account_id: int,
+        created_at: str,
+        period_label: str,
+        filters_json: str,
+        overview_json: str,
+        summary_json: str,
+        workouts_json: str,
+    ) -> int:
+        self.execute(
+            conn,
+            """
+            INSERT INTO report_runs (
+                owner_account_id,
+                created_at,
+                period_label,
+                filters_json,
+                overview_json,
+                summary_json,
+                workouts_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (owner_account_id, created_at, period_label, filters_json, overview_json, summary_json, workouts_json),
+        ).close()
+        row = self.fetchone(conn, "SELECT id FROM report_runs ORDER BY id DESC LIMIT 1")
+        return int(row["id"]) if row else 0
+
+    def trim_report_runs(self, conn, owner_account_id: int, keep_latest: int = 10) -> int:
+        rows = self.fetchall(
+            conn,
+            """
+            SELECT id
+            FROM report_runs
+            WHERE owner_account_id = ?
+            ORDER BY created_at DESC, id DESC
+            """,
+            (owner_account_id,),
+        )
+        stale_ids = [int(row["id"]) for row in rows[keep_latest:]]
+        if not stale_ids:
+            return 0
+        placeholders = ",".join("?" for _ in stale_ids)
+        self.execute(
+            conn,
+            f"DELETE FROM report_runs WHERE id IN ({placeholders})",
+            tuple(stale_ids),
+        ).close()
+        return len(stale_ids)
 
     def create_auth_code(self, conn, *, email: str, purpose: str, code: str, payload_json: str, created_at: str, expires_at: str) -> int:
         self.execute(

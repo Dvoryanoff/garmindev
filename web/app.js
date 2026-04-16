@@ -637,6 +637,7 @@ async function refreshSession() {
   accountEmailEl.textContent = account.email;
   accountRoleEl.textContent = account.role;
   adminLinkEl.hidden = !sessionState.is_admin;
+  adminLinkEl.href = sessionState.django_admin_url || "/admin";
   applyPreferences(sessionState.preferences || {});
   const hasData = Number(sessionState.dataset_meta?.total_files || 0) > 0;
   showDashboard(hasData);

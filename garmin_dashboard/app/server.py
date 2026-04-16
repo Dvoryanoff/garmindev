@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import cgi
 import json
+import os
 import threading
 import urllib.parse
 from datetime import datetime, timedelta
@@ -298,6 +299,7 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             "preferences": prefs,
             "dataset_meta": meta,
             "is_admin": account.get("role") == "admin",
+            "django_admin_url": os.environ.get("GARMIN_DJANGO_ADMIN_URL", "").strip(),
             "session": {
                 "created_at": account.get("session_created_at", ""),
                 "expires_at": account.get("session_expires_at", ""),
@@ -431,6 +433,17 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                     long_min_distance=request.interval_config.long_freestyle_min_distance_m,
                     updated_at=iso_now(),
                 )
+                self.db.create_report_run(
+                    conn,
+                    owner_account_id=int(account["id"]),
+                    created_at=iso_now(),
+                    period_label=str(report.get("filters", {}).get("period_label") or ""),
+                    filters_json=json.dumps(report.get("filters", {}), ensure_ascii=False),
+                    overview_json=json.dumps(report.get("overview", {}), ensure_ascii=False),
+                    summary_json=json.dumps(report.get("summary", []), ensure_ascii=False),
+                    workouts_json=json.dumps(report.get("workouts", []), ensure_ascii=False),
+                )
+                self.db.trim_report_runs(conn, int(account["id"]), keep_latest=10)
             self.send_json(report)
         except PermissionError as exc:
             self.send_json({"error": str(exc)}, status=HTTPStatus.UNAUTHORIZED)

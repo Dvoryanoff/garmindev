@@ -6,7 +6,9 @@ services:
     container_name: garmin-dashboard-app
     environment:
       GARMIN_HOST: 0.0.0.0
+      GARMIN_PUBLIC_HOST: 127.0.0.1
       GARMIN_PORT: 8000
+      GARMIN_DJANGO_ADMIN_PORT: 8010
       GARMIN_OPEN_BROWSER: 0
       GARMIN_RESOURCES_DIR: /app/resources
       GARMIN_UPLOAD_DIR: /app/uploads
@@ -22,6 +24,8 @@ services:
       - garmin_runtime:/app/runtime
       - garmin_monthly_history:/app/monthly_history
       - garmin_uploads:/app/uploads
+    ports:
+      - "8010:8010"
     depends_on:
       db:
         condition: service_healthy
