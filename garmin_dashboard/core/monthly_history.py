@@ -602,6 +602,7 @@ def build_monthly_history_payload(rows: list[dict]) -> dict:
     entries = monthly_rows_to_entries(rows)
     headers = list(MONTHLY_FIXED_DISTANCES)
     years = sorted({entry["year"] for entry in entries}, reverse=True)
+    current_year = date.today().year
     best_by_year_distance = {}
     for year in years:
         for distance in headers:
@@ -619,6 +620,12 @@ def build_monthly_history_payload(rows: list[dict]) -> dict:
                 "values": [
                     {
                         "text": entry.get(distance, ""),
+                        "fresh": (
+                            entry["year"] == current_year
+                            and entry.get(f"{distance}_s") is not None
+                            and best_by_year_distance.get((entry["year"], distance)) is not None
+                            and entry.get(f"{distance}_s") == best_by_year_distance.get((entry["year"], distance))
+                        ),
                         "best": (
                             entry.get(f"{distance}_s") is not None
                             and best_by_year_distance.get((entry["year"], distance)) is not None
@@ -635,6 +642,7 @@ def build_monthly_history_payload(rows: list[dict]) -> dict:
 
 def build_yearly_records_payload(rows: list[dict]) -> dict:
     headers = list(MONTHLY_FIXED_DISTANCES)
+    current_year = date.today().year
     best_by_year_distance: dict[tuple[int, int], tuple[float, str]] = {}
     for row in rows:
         year = int(row.get("year") or 0)
@@ -666,6 +674,12 @@ def build_yearly_records_payload(rows: list[dict]) -> dict:
                 "values": [
                     {
                         "text": best_by_year_distance.get((year, distance), ("", ""))[1] or "",
+                        "fresh": (
+                            year == current_year
+                            and (year, distance) in best_by_year_distance
+                            and overall_best_by_distance.get(distance) is not None
+                            and best_by_year_distance[(year, distance)][0] == overall_best_by_distance.get(distance)
+                        ),
                         "best": (
                             (year, distance) in best_by_year_distance
                             and overall_best_by_distance.get(distance) is not None

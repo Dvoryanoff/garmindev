@@ -1,9 +1,11 @@
 import unittest
+from datetime import date
 
 from garmin_dashboard.core.monthly_history import (
     MONTHLY_FIXED_DISTANCES,
     build_entries_by_user,
     build_monthly_entries,
+    build_monthly_history_payload,
     build_yearly_records_payload,
     choose_user_name,
     dedupe_workouts,
@@ -109,15 +111,30 @@ class MonthlyHistoryTestCase(unittest.TestCase):
         self.assertEqual(monthly_rows[0]["avg_rest"], "0:20")
 
     def test_build_yearly_records_payload_uses_best_per_year_and_distance(self):
+        current_year = date.today().year
         payload = build_yearly_records_payload([
-            {"year": 2025, "month": 1, "distance_m": 100, "best_pace_s": 82.0, "best_pace_text": "1:22.0"},
-            {"year": 2025, "month": 2, "distance_m": 100, "best_pace_s": 80.0, "best_pace_text": "1:20.0"},
-            {"year": 2024, "month": 3, "distance_m": 100, "best_pace_s": 84.0, "best_pace_text": "1:24.0"},
+            {"year": current_year, "month": 1, "distance_m": 100, "best_pace_s": 82.0, "best_pace_text": "1:22.0"},
+            {"year": current_year, "month": 2, "distance_m": 100, "best_pace_s": 80.0, "best_pace_text": "1:20.0"},
+            {"year": current_year - 1, "month": 3, "distance_m": 100, "best_pace_s": 84.0, "best_pace_text": "1:24.0"},
         ])
-        self.assertEqual(payload["rows"][0]["year"], 2025)
+        self.assertEqual(payload["rows"][0]["year"], current_year)
         self.assertEqual(payload["rows"][0]["values"][1]["text"], "1:20.0")
-        self.assertEqual(payload["rows"][1]["year"], 2024)
+        self.assertTrue(payload["rows"][0]["values"][1]["fresh"])
+        self.assertEqual(payload["rows"][1]["year"], current_year - 1)
         self.assertEqual(payload["rows"][1]["values"][1]["text"], "1:24.0")
+        self.assertFalse(payload["rows"][1]["values"][1]["fresh"])
+
+    def test_build_monthly_history_payload_marks_only_current_year_bests_as_fresh(self):
+        current_year = date.today().year
+        payload = build_monthly_history_payload([
+            {"year": current_year, "month": 1, "distance_m": 100, "best_pace_s": 80.0, "best_pace_text": "1:20.0"},
+            {"year": current_year, "month": 2, "distance_m": 100, "best_pace_s": 83.0, "best_pace_text": "1:23.0"},
+            {"year": current_year - 1, "month": 1, "distance_m": 100, "best_pace_s": 79.0, "best_pace_text": "1:19.0"},
+        ])
+        current_year_row = next(row for row in payload["rows"] if row["year"] == current_year and row["month"] == "Январь")
+        old_year_row = next(row for row in payload["rows"] if row["year"] == current_year - 1)
+        self.assertTrue(current_year_row["values"][1]["fresh"])
+        self.assertFalse(old_year_row["values"][1]["fresh"])
 
     def test_dedupe_workouts_keeps_unique_activity_keys(self):
         workouts = {

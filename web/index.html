@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Garmin Swim Dashboard</title>
-  <link rel="stylesheet" href="/style.css?v=20260406b">
+  <link rel="stylesheet" href="/style.css?v=20260416c">
 </head>
 <body>
   <main class="page">
@@ -130,35 +130,47 @@
             <option value="pool">Бассейн</option>
           </select>
         </div>
-        <div class="control mode-control">
+        <div class="control period-control">
           <label>Режим периода</label>
-          <div class="toggle-group">
-            <label class="toggle-option">
-              <input id="periodModePreset" type="radio" name="periodMode" value="preset" checked>
-              <span>Готовый период</span>
-            </label>
-            <label class="toggle-option">
-              <input id="periodModeCustom" type="radio" name="periodMode" value="custom">
-              <span>Свои N дней</span>
-            </label>
+          <div class="period-grid">
+            <div class="period-option">
+              <label class="toggle-option">
+                <input id="periodModePreset" type="radio" name="periodMode" value="preset" checked>
+                <span>Готовый период</span>
+              </label>
+              <div class="control period-field" id="presetPeriodWrap">
+                <select id="period">
+                  <option value="current_year">Текущий год</option>
+                  <option value="month">Последние 30 дней</option>
+                  <option value="quarter">Последние 90 дней</option>
+                  <option value="current_month">Текущий месяц</option>
+                  <option value="last_month">Прошлый месяц</option>
+                  <option value="all">Все данные</option>
+                </select>
+                <div class="control-note">Используется только в режиме «Готовый период».</div>
+              </div>
+            </div>
+            <div class="period-option">
+              <label class="toggle-option">
+                <input id="periodModeYear" type="radio" name="periodMode" value="year">
+                <span>Период за год</span>
+              </label>
+              <div class="control period-field is-disabled" id="reportYearWrap">
+                <select id="reportYear" disabled></select>
+                <div class="control-note">Используется только в режиме «Период за год».</div>
+              </div>
+            </div>
+            <div class="period-option">
+              <label class="toggle-option">
+                <input id="periodModeCustom" type="radio" name="periodMode" value="custom">
+                <span>Свои N дней</span>
+              </label>
+              <div class="control period-field is-disabled" id="daysWrap">
+                <input id="days" type="number" min="1" value="180" disabled>
+                <div class="control-note">Используется только в режиме «Свои N дней».</div>
+              </div>
+            </div>
           </div>
-        </div>
-        <div class="control" id="presetPeriodWrap">
-          <label for="period">Период</label>
-          <select id="period">
-            <option value="current_year">Текущий год</option>
-            <option value="year">Последний год</option>
-            <option value="month">Последние 30 дней</option>
-            <option value="quarter">Последние 90 дней</option>
-            <option value="current_month">Текущий месяц</option>
-            <option value="last_month">Прошлый месяц</option>
-            <option value="all">Все данные</option>
-          </select>
-        </div>
-        <div class="control is-disabled" id="daysWrap">
-          <label for="days">Количество дней</label>
-          <input id="days" type="number" min="1" value="180" disabled>
-          <div class="control-note">Используется только в режиме «Свои N дней».</div>
         </div>
       </section>
 
@@ -228,6 +240,7 @@
                   <th>Дата</th>
                   <th>Объём</th>
                   <th>Время</th>
+                  <th>Рекорды</th>
                   <th>Лучший темп</th>
                   <th>Средний отдых</th>
                   <th>Паузы > 2 мин</th>
@@ -276,6 +289,6 @@
       </section>
     </section>
   </main>
-  <script src="/app.js?v=20260406a"></script>
+  <script src="/app.js?v=20260416c"></script>
 </body>
 </html>

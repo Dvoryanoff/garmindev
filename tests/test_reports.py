@@ -1,4 +1,5 @@
 import unittest
+from datetime import date
 
 from garmin_dashboard.app.reports import build_summary, build_workout_groups, middle_half_rows, resolve_period
 
@@ -47,16 +48,23 @@ class ReportsTestCase(unittest.TestCase):
         self.assertIsNotNone(start)
         self.assertIsNotNone(end)
 
+    def test_resolve_period_for_selected_year(self):
+        start, end, label = resolve_period(period="selected_year", report_year=2025)
+        self.assertEqual(label, "2025 год")
+        self.assertEqual(start.isoformat(), "2025-01-01")
+        self.assertEqual(end.isoformat(), "2025-12-31")
+
     def test_build_summary_includes_pool_rest_for_same_distance(self):
+        current_year = date.today().year
         rows = [
             {
                 "activity_key": "w1",
                 "distance_m": 50,
                 "time_s": 40,
                 "pace_100m_s": 80,
-                "activity_date": "2026-03-01 10:00:00",
-                "lap_start": "2026-03-01 10:00:00",
-                "lap_end": "2026-03-01 10:00:40",
+                "activity_date": f"{current_year}-03-01 10:00:00",
+                "lap_start": f"{current_year}-03-01 10:00:00",
+                "lap_end": f"{current_year}-03-01 10:00:40",
                 "file_name": "row-1.fit",
                 "stroke": "freestyle",
                 "swim_type": "pool",
@@ -66,9 +74,9 @@ class ReportsTestCase(unittest.TestCase):
                 "distance_m": 50,
                 "time_s": 41,
                 "pace_100m_s": 82,
-                "activity_date": "2026-03-01 10:00:00",
-                "lap_start": "2026-03-01 10:01:00",
-                "lap_end": "2026-03-01 10:01:41",
+                "activity_date": f"{current_year}-03-01 10:00:00",
+                "lap_start": f"{current_year}-03-01 10:01:00",
+                "lap_end": f"{current_year}-03-01 10:01:41",
                 "file_name": "row-2.fit",
                 "stroke": "backstroke",
                 "swim_type": "pool",
@@ -78,9 +86,9 @@ class ReportsTestCase(unittest.TestCase):
                 "distance_m": 100,
                 "time_s": 90,
                 "pace_100m_s": 90,
-                "activity_date": "2026-03-01 10:00:00",
-                "lap_start": "2026-03-01 10:02:00",
-                "lap_end": "2026-03-01 10:03:30",
+                "activity_date": f"{current_year}-03-01 10:00:00",
+                "lap_start": f"{current_year}-03-01 10:02:00",
+                "lap_end": f"{current_year}-03-01 10:03:30",
                 "file_name": "row-3.fit",
                 "stroke": "freestyle",
                 "swim_type": "pool",
@@ -90,6 +98,7 @@ class ReportsTestCase(unittest.TestCase):
         summary = build_summary(rows, include_pool_rest=True, rest_by_distance={50: 20.0})
         self.assertEqual(summary[0]["distance_m"], 50)
         self.assertEqual(summary[0]["avg_rest"], "0:20")
+        self.assertTrue(summary[0]["best_is_current_year"])
         self.assertEqual(summary[1]["avg_rest"], "")
 
     def test_build_workout_groups_includes_average_rest_for_named_strokes(self):
@@ -142,6 +151,29 @@ class ReportsTestCase(unittest.TestCase):
         self.assertEqual(len(workouts), 1)
         self.assertEqual(workouts[0]["avg_rest"], "0:32")
         self.assertEqual(workouts[0]["long_rest_count"], 0)
+
+    def test_build_workout_groups_can_include_record_distances(self):
+        rows = [
+            {
+                "activity_key": "w1",
+                "distance_m": 200,
+                "time_s": 180,
+                "pace_100m_s": 90,
+                "activity_date": "2026-03-01 10:00:00",
+                "lap_start": "2026-03-01 10:00:00",
+                "lap_end": "2026-03-01 10:03:00",
+                "file_name": "row-1.fit",
+                "stroke": "freestyle",
+                "swim_type": "pool",
+                "workout_total_distance_m": 200,
+                "workout_total_time_s": 180,
+            },
+        ]
+        workouts = build_workout_groups(rows)
+        workouts[0]["record_distances"] = [200, 400]
+        workouts[0]["record_distances_text"] = "200, 400"
+        self.assertEqual(workouts[0]["record_distances"], [200, 400])
+        self.assertEqual(workouts[0]["record_distances_text"], "200, 400")
 
 
 if __name__ == "__main__":

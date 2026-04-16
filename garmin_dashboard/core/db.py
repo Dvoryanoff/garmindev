@@ -219,6 +219,7 @@ class Database:
                     swim_mode TEXT NOT NULL DEFAULT 'all',
                     period TEXT NOT NULL DEFAULT 'current_year',
                     days INTEGER,
+                    report_year INTEGER,
                     target_distances TEXT NOT NULL DEFAULT '50,100,150,200,300,400,500,600,800,1000',
                     long_min_distance REAL NOT NULL DEFAULT 1000,
                     updated_at TEXT NOT NULL DEFAULT ''
@@ -400,6 +401,9 @@ class Database:
                     "owner_account_id": f"{bigint} REFERENCES accounts(id) ON DELETE CASCADE",
                     "garmin_user_id": "TEXT NOT NULL DEFAULT ''",
                     "garmin_user_name": "TEXT NOT NULL DEFAULT ''",
+                },
+                "user_preferences": {
+                    "report_year": "INTEGER",
                 },
             }
             for table_name, columns in legacy_columns.items():
@@ -764,7 +768,7 @@ class Database:
         return self.fetchone(
             conn,
             """
-            SELECT swim_mode, period, days, target_distances, long_min_distance, updated_at
+            SELECT swim_mode, period, days, report_year, target_distances, long_min_distance, updated_at
             FROM user_preferences
             WHERE account_id = ?
             """,
@@ -779,6 +783,7 @@ class Database:
         swim_mode: str,
         period: str,
         days: int | None,
+        report_year: int | None,
         target_distances: str,
         long_min_distance: float,
         updated_at: str,
@@ -791,19 +796,21 @@ class Database:
                 swim_mode,
                 period,
                 days,
+                report_year,
                 target_distances,
                 long_min_distance,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(account_id) DO UPDATE SET
                 swim_mode = excluded.swim_mode,
                 period = excluded.period,
                 days = excluded.days,
+                report_year = excluded.report_year,
                 target_distances = excluded.target_distances,
                 long_min_distance = excluded.long_min_distance,
                 updated_at = excluded.updated_at
             """,
-            (account_id, swim_mode, period, days, target_distances, long_min_distance, updated_at),
+            (account_id, swim_mode, period, days, report_year, target_distances, long_min_distance, updated_at),
         ).close()
 
     def find_existing_file_by_hash(self, conn, owner_account_id: int, file_hash: str) -> dict | None:
@@ -1311,6 +1318,22 @@ class Database:
             """,
             (owner_account_id,),
         ) or {}
+        available_years = [
+            int(row["year"])
+            for row in self.fetchall(
+                conn,
+                """
+                SELECT DISTINCT CAST(substr(activity_date, 1, 4) AS INTEGER) AS year
+                FROM activities
+                WHERE owner_account_id = ?
+                  AND COALESCE(activity_date, '') <> ''
+                  AND length(activity_date) >= 4
+                ORDER BY year DESC
+                """,
+                (owner_account_id,),
+            )
+            if int(row.get("year") or 0) > 0
+        ]
         return {
             "total_files": int(files.get("total_files") or 0),
             "ready_files": int(files.get("ready_files") or 0),
@@ -1321,6 +1344,7 @@ class Database:
             "total_activities": int(activities.get("total_activities") or 0),
             "first_activity_date": str(activities.get("first_activity_date") or "")[:10],
             "last_activity_date": str(activities.get("last_activity_date") or "")[:10],
+            "available_years": available_years,
         }
 
     def upsert_monthly_best(self, conn, *, owner_account_id: int, year: int, month: int, distance_m: int, best_pace_s: float, best_pace_text: str) -> None:

@@ -107,6 +107,7 @@ class ReportRequest:
     swim_mode: str = "all"
     period: str = "current_year"
     days: int | None = None
+    report_year: int | None = None
     persist_csv: bool = False
     owner_account_id: int | None = None
     interval_config: IntervalConfig = IntervalConfig()

@@ -41,9 +41,12 @@ const uploadHintEl = document.getElementById("uploadHint");
 const uploadHintEmptyEl = document.getElementById("uploadHintEmpty");
 const swimModeEl = document.getElementById("swimMode");
 const periodModePresetEl = document.getElementById("periodModePreset");
+const periodModeYearEl = document.getElementById("periodModeYear");
 const periodModeCustomEl = document.getElementById("periodModeCustom");
 const presetPeriodWrapEl = document.getElementById("presetPeriodWrap");
 const periodEl = document.getElementById("period");
+const reportYearWrapEl = document.getElementById("reportYearWrap");
+const reportYearEl = document.getElementById("reportYear");
 const daysWrapEl = document.getElementById("daysWrap");
 const daysEl = document.getElementById("days");
 const longMinDistanceEl = document.getElementById("longMinDistance");
@@ -80,6 +83,10 @@ const SESSION_HEARTBEAT_MS = 60 * 1000;
 const BROWSER_SESSION_DAY_KEY = "garmin_browser_session_day";
 const DEFAULT_UPLOAD_HINT =
   "Старые файлы будут проигнорированы по hash, новые тренировки попадут в базу пользователя. Можно загружать и папкой.";
+
+function currentYearNumber() {
+  return new Date().getFullYear();
+}
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -239,24 +246,61 @@ function renderDistancePicker(preselected = null) {
 }
 
 function syncPeriodMode() {
+  const usePreset = periodModePresetEl.checked;
+  const useYear = periodModeYearEl.checked;
   const useCustomDays = periodModeCustomEl.checked;
-  presetPeriodWrapEl.classList.toggle("is-disabled", useCustomDays);
+  presetPeriodWrapEl.classList.toggle("is-disabled", !usePreset);
+  reportYearWrapEl.classList.toggle("is-disabled", !useYear);
   daysWrapEl.classList.toggle("is-disabled", !useCustomDays);
-  periodEl.disabled = useCustomDays;
+  periodEl.disabled = !usePreset;
+  reportYearEl.disabled = !useYear;
   daysEl.disabled = !useCustomDays;
+}
+
+function getAvailableReportYears() {
+  const sessionYears = Array.isArray(sessionState?.dataset_meta?.available_years) ? sessionState.dataset_meta.available_years : [];
+  const monthlyYears = Array.isArray(monthlyHistoryState?.years) ? monthlyHistoryState.years : [];
+  const years = [...sessionYears, ...monthlyYears]
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  if (!years.length) {
+    return [currentYearNumber()];
+  }
+  return Array.from(new Set(years)).sort((a, b) => b - a);
+}
+
+function syncReportYearOptions(preferredYear = null) {
+  const years = getAvailableReportYears();
+  const fallbackYear = years[0] || currentYearNumber();
+  const selectedYear = years.includes(Number(preferredYear))
+    ? Number(preferredYear)
+    : (years.includes(Number(reportYearEl.value)) ? Number(reportYearEl.value) : fallbackYear);
+  reportYearEl.innerHTML = years.map((year) => `
+    <option value="${escapeHtml(year)}">${escapeHtml(year)}</option>
+  `).join("");
+  reportYearEl.value = String(selectedYear);
 }
 
 function applyPreferences(preferences = {}) {
   swimModeEl.value = preferences.swim_mode || "all";
-  periodEl.value = preferences.period || "current_year";
+  periodEl.value = ["current_year", "month", "quarter", "current_month", "last_month", "all"].includes(preferences.period)
+    ? preferences.period
+    : "current_year";
   daysEl.value = preferences.days || 180;
   longMinDistanceEl.value = preferences.long_min_distance || 1000;
+  syncReportYearOptions(preferences.report_year || null);
 
-  if (preferences.days) {
+  if (preferences.period === "selected_year") {
+    periodModeYearEl.checked = true;
+    periodModePresetEl.checked = false;
+    periodModeCustomEl.checked = false;
+  } else if (preferences.days) {
     periodModeCustomEl.checked = true;
     periodModePresetEl.checked = false;
+    periodModeYearEl.checked = false;
   } else {
     periodModePresetEl.checked = true;
+    periodModeYearEl.checked = false;
     periodModeCustomEl.checked = false;
   }
   syncPeriodMode();
@@ -269,10 +313,20 @@ function applyPreferences(preferences = {}) {
 }
 
 function syncControlsFromReportFilters(filters = {}) {
+  if (Array.isArray(filters.available_years) && sessionState) {
+    sessionState = {
+      ...sessionState,
+      dataset_meta: {
+        ...(sessionState.dataset_meta || {}),
+        available_years: filters.available_years,
+      },
+    };
+  }
   applyPreferences({
     swim_mode: filters.swim_mode || swimModeEl.value,
     period: filters.period || periodEl.value,
     days: filters.days ?? (periodModeCustomEl.checked ? Number(daysEl.value || 180) : null),
+    report_year: filters.report_year ?? Number(reportYearEl.value || getAvailableReportYears()[0] || currentYearNumber()),
     target_distances: Array.isArray(filters.target_distances) ? filters.target_distances.join(",") : getSelectedDistances().join(","),
     long_min_distance: filters.long_freestyle_min_distance_m ?? longMinDistanceEl.value,
   });
@@ -292,14 +346,19 @@ function validateReportFilters() {
 
 function buildQuery() {
   const { selectedDistances, longMinDistance } = validateReportFilters();
+  const useYear = periodModeYearEl.checked;
+  const useCustomDays = periodModeCustomEl.checked;
   const params = new URLSearchParams({
     swim_mode: swimModeEl.value,
-    period: periodModeCustomEl.checked ? "all" : periodEl.value,
+    period: useCustomDays ? "all" : (useYear ? "selected_year" : periodEl.value),
     distances: selectedDistances.join(","),
     long_min_distance: String(longMinDistance),
   });
-  if (periodModeCustomEl.checked) {
+  if (useCustomDays) {
     params.set("days", daysEl.value || "180");
+  }
+  if (useYear) {
+    params.set("report_year", reportYearEl.value || String(getAvailableReportYears()[0] || currentYearNumber()));
   }
   return params;
 }
@@ -333,8 +392,8 @@ function renderSummary(rows) {
       <td>${escapeHtml(row.count)}</td>
       <td>${escapeHtml(row.avg_time)}</td>
       <td>${escapeHtml(row.best_time)}</td>
-      <td>${escapeHtml(row.best_pace_100m)}</td>
-      <td>${escapeHtml(row.best_pace_date)}</td>
+      <td><span class="record-chip ${row.best_is_current_year ? "is-fresh" : ""}">${escapeHtml(row.best_pace_100m)}</span></td>
+      <td><span class="record-chip ${row.best_is_current_year ? "is-fresh" : ""}">${escapeHtml(row.best_pace_date)}</span></td>
       <td>${escapeHtml(row.avg_pace_100m)}</td>
       <td>${escapeHtml(String(row.middle_pace_100m || "").replace("/100m", ""))} <span class="muted">(${escapeHtml(row.middle_count)}/${escapeHtml(row.middle_total_count ?? row.count)})</span></td>
       <td>${escapeHtml(row.avg_rest || "—")}</td>
@@ -350,12 +409,13 @@ function renderWorkouts(rows) {
         <td>${escapeHtml(row.date)}</td>
         <td>${escapeHtml(row.total_distance_m)} м</td>
         <td>${escapeHtml(row.total_time)}</td>
+        <td>${row.record_distances_text ? `<span class="record-badge">★ ${escapeHtml(row.record_distances_text)}</span>` : `<span class="muted">—</span>`}</td>
         <td>${escapeHtml(row.best_pace_100m)}</td>
         <td>${escapeHtml(row.avg_rest || "—")}</td>
         <td>${escapeHtml(row.long_rest_count ?? 0)}</td>
       </tr>
     `).join("")
-    : `<tr><td colspan="6">Тренировки не найдены.</td></tr>`;
+    : `<tr><td colspan="7">Тренировки не найдены.</td></tr>`;
 }
 
 function renderMeta(meta) {
@@ -422,6 +482,7 @@ function renderMonthlyHistory(payload) {
     years: Array.isArray(payload.years) ? payload.years : [],
     rows: Array.isArray(payload.rows) ? payload.rows : [],
   };
+  syncReportYearOptions();
   const years = monthlyHistoryState.years;
   const selectedYear = years.includes(Number(monthlyYearSelectEl.value))
     ? Number(monthlyYearSelectEl.value)
@@ -447,7 +508,7 @@ function renderYearlyRecords(payload) {
         <td>${escapeHtml(row.year)}</td>
         ${row.values.map((value) => `
           <td>
-            <span class="pace-pill ${value.best ? "is-best" : ""}">
+            <span class="pace-pill ${value.fresh ? "is-fresh" : (value.best ? "is-best" : "")}">
               ${escapeHtml(value.text || "—")}
             </span>
           </td>
@@ -467,7 +528,7 @@ function renderMonthlyHistoryYear(year) {
         <td>${escapeHtml(row.month)}</td>
         ${row.values.map((value) => `
           <td>
-            <span class="pace-pill ${value.best ? "is-best" : ""}">
+            <span class="pace-pill ${value.fresh ? "is-fresh" : ""}">
               ${escapeHtml(value.text || "—")}
             </span>
           </td>
@@ -580,6 +641,7 @@ async function refreshSession() {
   const hasData = Number(sessionState.dataset_meta?.total_files || 0) > 0;
   showDashboard(hasData);
   if (hasData) {
+    syncReportYearOptions();
     await loadReport();
     await loadMonthlyHistory();
     await loadYearlyRecords();
@@ -601,6 +663,7 @@ async function refreshSession() {
       last_activity_date: "",
       timings: {},
     });
+    syncReportYearOptions();
   }
   await refreshRuntimeStatus();
   resumeActiveUploadJob().catch(() => {});
@@ -940,6 +1003,7 @@ function resetOtherInputs(activeInput) {
 }
 
 periodModePresetEl.addEventListener("change", syncPeriodMode);
+periodModeYearEl.addEventListener("change", syncPeriodMode);
 periodModeCustomEl.addEventListener("change", syncPeriodMode);
 longMinDistanceEl.addEventListener("change", () => renderDistancePicker());
 loadButtonEl.addEventListener("click", () => loadReport());
@@ -962,6 +1026,7 @@ backFromLoginButtonEl.addEventListener("click", () => showAuth());
 backFromRegisterButtonEl.addEventListener("click", () => showAuth());
 
 syncPeriodMode();
+syncReportYearOptions();
 renderDistancePicker();
 updateUploadSelection();
 monthlyExportEl.href = "/api/export/monthly-history.xlsx";

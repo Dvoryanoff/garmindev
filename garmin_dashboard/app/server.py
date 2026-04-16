@@ -101,6 +101,7 @@ def build_request_from_params(params: dict, owner_account_id: int) -> ReportRequ
     swim_mode = params.get("swim_mode", ["all"])[0]
     period = params.get("period", ["current_year"])[0]
     days_raw = params.get("days", [""])[0]
+    report_year_raw = params.get("report_year", [""])[0]
     distances_raw = params.get("distances", [""])[0]
     long_min_raw = params.get("long_min_distance", ["1000"])[0]
     if "distances" in params and not str(distances_raw).strip():
@@ -111,6 +112,7 @@ def build_request_from_params(params: dict, owner_account_id: int) -> ReportRequ
         swim_mode=swim_mode,
         period=period,
         days=int(days_raw) if days_raw else None,
+        report_year=int(report_year_raw) if report_year_raw else None,
         persist_csv=False,
         owner_account_id=owner_account_id,
         interval_config=IntervalConfig(
@@ -340,6 +342,7 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                 swim_mode="all",
                 period="current_year",
                 days=None,
+                report_year=None,
                 target_distances="50,100,150,200,300,400,500,600,800,1000",
                 long_min_distance=1000.0,
                 updated_at=iso_now(),
@@ -423,6 +426,7 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                     swim_mode=request.swim_mode,
                     period=request.period,
                     days=request.days,
+                    report_year=request.report_year,
                     target_distances=",".join(str(x) for x in request.interval_config.target_distances),
                     long_min_distance=request.interval_config.long_freestyle_min_distance_m,
                     updated_at=iso_now(),
@@ -444,8 +448,8 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                 sheet_name = "Сводка по дистанциям"
                 filename = "summary.xlsx"
             else:
-                headers = ["Дата", "Общее расстояние", "Время", "Лучший темп", "Средний отдых", "Паузы > 2 мин"]
-                rows = [[row["date"], f"{row['total_distance_m']} м", row["total_time"], row["best_pace_100m"], row.get("avg_rest") or "—", row.get("long_rest_count") or 0] for row in report["workouts"]]
+                headers = ["Дата", "Общее расстояние", "Время", "Рекорды", "Лучший темп", "Средний отдых", "Паузы > 2 мин"]
+                rows = [[row["date"], f"{row['total_distance_m']} м", row["total_time"], row.get("record_distances_text") or "—", row["best_pace_100m"], row.get("avg_rest") or "—", row.get("long_rest_count") or 0] for row in report["workouts"]]
                 sheet_name = "Тренировки"
                 filename = "workouts.xlsx"
             from garmin_dashboard.core.xlsx_export import build_workbook_bytes

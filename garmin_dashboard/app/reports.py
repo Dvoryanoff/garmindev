@@ -61,7 +61,7 @@ def row_matches_requested_distance_group(row: dict, request: ReportRequest) -> b
     return False
 
 
-def resolve_period(period: str = "current_year", days: int | None = None, today: date | None = None):
+def resolve_period(period: str = "current_year", days: int | None = None, today: date | None = None, report_year: int | None = None):
     today = today or datetime.now().date()
     period = norm(period or "current_year")
 
@@ -81,6 +81,11 @@ def resolve_period(period: str = "current_year", days: int | None = None, today:
     if period in {"current_year", "year_to_date", "ytd"}:
         start = today.replace(month=1, day=1)
         return start, today, "Текущий год"
+    if period in {"selected_year", "report_year"}:
+        target_year = int(report_year or today.year)
+        start = date(target_year, 1, 1)
+        end = date(target_year, 12, 31)
+        return start, end, f"{target_year} год"
     if period == "current_month":
         start = today.replace(day=1)
         return start, today, "Текущий месяц"
@@ -121,6 +126,16 @@ def best_pace_date_text(row: dict) -> str:
     return ""
 
 
+def year_from_date_text(value: str | None) -> int | None:
+    text = str(value or "").strip()
+    if len(text) < 4:
+        return None
+    try:
+        return int(text[:4])
+    except Exception:
+        return None
+
+
 def middle_half_rows(rows: list[dict]) -> list[dict]:
     if not rows:
         return []
@@ -150,6 +165,7 @@ def build_summary(rows: list[dict], *, include_pool_rest: bool = False, rest_by_
         groups[row["distance_m"]].append(row)
     rest_by_distance = rest_by_distance or {}
 
+    current_year = date.today().year
     summary = []
     for distance in sorted(groups):
         group = groups[distance]
@@ -190,6 +206,8 @@ def build_summary(rows: list[dict], *, include_pool_rest: bool = False, rest_by_
             "best_pace_100m_s": round(best_pace_row["pace_100m_s"], 2),
             "best_pace_100m": pace_str(best_pace_row["pace_100m_s"]),
             "best_pace_date": best_pace_date_text(best_pace_row),
+            "best_activity_key": str(best_pace_row.get("activity_key") or ""),
+            "best_is_current_year": year_from_date_text(best_pace_date_text(best_pace_row)) == current_year,
             "middle_count": middle_count,
             "middle_total_count": count,
             "middle_pace_100m_s": round(middle_pace, 2),
@@ -237,6 +255,7 @@ def build_workout_groups(rows: list[dict], *, rest_by_activity: dict[str, dict] 
     for group in sorted_groups:
         ordered_group = sorted_rows(group)
         sample = ordered_group[0]
+        activity_key = str(sample.get("activity_key") or sample.get("activity_date", "")[:10] or sample.get("lap_start", "")[:10] or "unknown")
         workout_date = (sample.get("activity_date", "") or sample.get("lap_start", "") or "unknown")[:10]
         total_distance = max((float(r.get("workout_total_distance_m", 0) or 0) for r in ordered_group), default=0.0)
         total_time = max((float(r.get("workout_total_time_s", 0) or 0) for r in ordered_group), default=0.0)
@@ -253,6 +272,7 @@ def build_workout_groups(rows: list[dict], *, rest_by_activity: dict[str, dict] 
                 )
             )
         workouts.append({
+            "activity_key": activity_key,
             "date": workout_date,
             "intervals": len(ordered_group),
             "total_distance_m": round(total_distance, 2),
@@ -264,6 +284,7 @@ def build_workout_groups(rows: list[dict], *, rest_by_activity: dict[str, dict] 
             "avg_rest": format_rest(avg_rest_s),
             "long_rest_count": long_rest_count,
             "swim_types": ", ".join(swim_types),
+            "record_distances": [],
         })
     return workouts
 
@@ -271,7 +292,7 @@ def build_workout_groups(rows: list[dict], *, rest_by_activity: dict[str, dict] 
 def build_report(request: ReportRequest) -> dict:
     if request.owner_account_id is None:
         raise ValueError("owner_account_id is required")
-    start_date, end_date, period_label = resolve_period(period=request.period, days=request.days)
+    start_date, end_date, period_label = resolve_period(period=request.period, days=request.days, report_year=request.report_year)
     filtered_rows, db_meta = load_report_rows(
         runtime_config=request.runtime_config,
         owner_account_id=request.owner_account_id,
@@ -312,6 +333,18 @@ def build_report(request: ReportRequest) -> dict:
     ) if filtered_rows else []
     detail_rows = add_summary_columns_to_details(filtered_rows, summary_rows) if filtered_rows else []
     workouts = build_workout_groups(filtered_rows, rest_by_activity=workout_rest_by_activity) if filtered_rows else []
+    if workouts and summary_rows:
+        record_distances_by_activity = defaultdict(list)
+        for row in summary_rows:
+            activity_key = str(row.get("best_activity_key") or "")
+            distance = int(row.get("distance_m") or 0)
+            if activity_key and distance:
+                record_distances_by_activity[activity_key].append(distance)
+        for workout in workouts:
+            activity_key = str(workout.get("activity_key") or "")
+            distances = sorted(set(record_distances_by_activity.get(activity_key, [])))
+            workout["record_distances"] = distances
+            workout["record_distances_text"] = ", ".join(str(distance) for distance in distances)
 
     total_distance = sum(row["distance_m"] for row in filtered_rows)
     total_time = sum(row["time_s"] for row in filtered_rows)
@@ -354,12 +387,14 @@ def build_report(request: ReportRequest) -> dict:
             "swim_mode": request.swim_mode,
             "period": request.period,
             "days": request.days,
+            "report_year": request.report_year,
             "resource_dir": "user_uploads",
             "period_label": period_label,
             "date_start": start_date.isoformat() if start_date else "",
             "date_end": end_date.isoformat() if end_date else "",
             "target_distances": list(request.interval_config.target_distances),
             "long_freestyle_min_distance_m": request.interval_config.long_freestyle_min_distance_m,
+            "available_years": db_meta.get("available_years", []),
         },
         "dataset_meta": dataset_meta,
         "overview": {

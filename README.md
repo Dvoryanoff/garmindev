@@ -73,6 +73,17 @@ python3 run_dashboard.py
 GARMIN_OPEN_BROWSER=0 python3 run_dashboard.py
 ```
 
+### Короткие команды через Make
+
+Если удобнее короткими командами:
+
+```bash
+make run
+make run-no-browser
+make test
+make check
+```
+
 ### Docker
 
 Подготовить env:
@@ -194,6 +205,165 @@ python3 tools/check.py
 - monthly history
 - смену фильтров и пересборку отчёта
 - admin statistics
+
+## Шпаргалка Команд
+
+### Запуск проекта
+
+Обычный запуск:
+
+```bash
+python3 run_dashboard.py
+```
+
+Запуск без автооткрытия браузера:
+
+```bash
+GARMIN_OPEN_BROWSER=0 python3 run_dashboard.py
+```
+
+Коротко через `make`:
+
+```bash
+make run
+make run-no-browser
+```
+
+### Тесты и проверки
+
+Все тесты:
+
+```bash
+python3 -m pytest -q tests
+```
+
+Только отчёты и история:
+
+```bash
+python3 -m pytest -q tests/test_reports.py tests/test_monthly_history.py
+```
+
+Только ingest, jobs и auth:
+
+```bash
+python3 -m pytest -q tests/test_jobs_and_auth.py tests/test_db_ingest.py
+```
+
+Полный локальный check:
+
+```bash
+python3 tools/check.py
+```
+
+Коротко через `make`:
+
+```bash
+make test
+make test-reports
+make test-auth
+make check
+```
+
+### Производительность и сервисные скрипты
+
+Локальный benchmark:
+
+```bash
+python3 tools/benchmark_runtime.py
+```
+
+Разложить `resources/fits` по годам:
+
+```bash
+python3 tools/organize_fits_by_year.py
+```
+
+Коротко через `make`:
+
+```bash
+make benchmark
+make organize-fits
+```
+
+### Очистка локальных данных
+
+Удалить только локальную sqlite-базу:
+
+```bash
+rm -f garmin_dashboard.db
+```
+
+Удалить кэши и временные CSV:
+
+```bash
+rm -f garmin_swim_fit_cache.pkl
+rm -f garmin_swim_intervals_details.csv
+rm -f garmin_swim_intervals_summary.csv
+rm -f monthly_history/*.pkl
+```
+
+Очистить uploads/runtime и файлы monthly history:
+
+```bash
+rm -rf uploads
+rm -rf runtime
+rm -f monthly_history/*.xlsx
+rm -f monthly_history/*.pkl
+```
+
+Полный локальный сброс проекта:
+
+```bash
+rm -f garmin_dashboard.db
+rm -f garmin_swim_fit_cache.pkl
+rm -f garmin_swim_intervals_details.csv
+rm -f garmin_swim_intervals_summary.csv
+rm -rf uploads
+rm -rf runtime
+rm -f monthly_history/*.xlsx
+rm -f monthly_history/*.pkl
+```
+
+Коротко через `make`:
+
+```bash
+make db-reset
+make cache-clear
+make runtime-clear
+make reset-local
+```
+
+### Git
+
+Посмотреть изменения:
+
+```bash
+git status
+git status --short
+```
+
+Закоммитить и отправить:
+
+```bash
+git add .
+git commit -m "your message"
+git push
+```
+
+Коротко:
+
+```bash
+make git-status
+make git-wip
+make git-push
+```
+
+Если хочешь всегда одинаковый промежуточный коммит без размышлений над текстом:
+
+```bash
+make git-wip
+make git-push
+```
 
 ## Структура проекта
 
